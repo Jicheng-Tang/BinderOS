@@ -1,0 +1,10 @@
+{
+  "name": "binderos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "validate": "node scripts/validate-artifact.mjs",
+    "check": "npm run build && npm run validate"
+  }
+}

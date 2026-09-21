@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+site.tar.gz
+node_modules/
+gateway/__pycache__/
+gateway/.venv/
+gateway/jobs/
