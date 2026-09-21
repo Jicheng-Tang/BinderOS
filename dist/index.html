@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07111f" />
+    <meta name="description" content="从靶点发现到实验级 binder 候选交付的一体化蛋白设计智能工作台。" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2307111f'/%3E%3Cpath d='M17 17c18 0 12 30 30 30M47 17c-18 0-12 30-30 30' fill='none' stroke='%2330e6c5' stroke-width='5' stroke-linecap='round'/%3E%3Cpath d='M22 24h20M22 40h20' stroke='%237ea7ff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <title>BinderOS · 蛋白设计智能工作台</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07111f;
+        --panel: #0b1828;
+        --panel-2: #0e1d2e;
+        --line: #203248;
+        --text: #ecf5ff;
+        --muted: #91a4b9;
+        --teal: #30e6c5;
+        --blue: #7ea7ff;
+        --amber: #ffc66d;
+        --radius: 18px;
+      }
+      * { box-sizing: border-box; }
+      html { font-size: 16px; }
+      body {
+        margin: 0; min-width: 320px; min-height: 100vh;
+        background: radial-gradient(circle at 80% -10%, rgba(48,230,197,.12), transparent 28rem), linear-gradient(rgba(126,167,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(126,167,255,.035) 1px, transparent 1px), var(--bg);
+        background-size: auto, 32px 32px, 32px 32px, auto;
+        color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      button, input, select { font: inherit; } button { cursor: pointer; }
+      .shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+      .sidebar { position: sticky; top: 0; height: 100vh; padding: 28px 20px; border-right: 1px solid var(--line); background: rgba(5,15,27,.92); backdrop-filter: blur(18px); }
+      .brand { display: flex; align-items: center; gap: 12px; padding: 0 8px 30px; }
+      .brand-mark { width: 38px; height: 38px; border: 1px solid #2bbaa9; border-radius: 12px; display: grid; place-items: center; color: var(--teal); background: rgba(48,230,197,.08); }
+      .brand-mark svg { width: 24px; }
+      .brand-name { font-size: 1.06rem; font-weight: 750; letter-spacing: -.02em; }
+      .brand-meta { display: block; font-size: .75rem; color: var(--muted); margin-top: 2px; }
+      .nav-title { font-size: .74rem; letter-spacing: .12em; color: #64778d; padding: 0 12px 10px; }
+      .nav { display: grid; gap: 8px; }
+      .nav-item { width: 100%; display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center; padding: 12px; border-radius: 12px; color: #a7b7c8; border: 1px solid transparent; background: transparent; text-align: left; }
+      .nav-item.active { color: var(--text); background: #102238; border-color: #25405e; }
+      .nav-index { font: 700 .74rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--teal); }
+      .nav-label strong { display: block; font-size: .9rem; font-weight: 650; }
+      .nav-label span { display: block; font-size: .73rem; margin-top: 3px; color: #6f8399; }
+      .nav-state { width: 7px; height: 7px; border-radius: 50%; background: #46586a; }
+      .nav-state.live { background: var(--teal); box-shadow: 0 0 0 5px rgba(48,230,197,.09); }
+      .sidebar-note { position: absolute; bottom: 24px; left: 20px; right: 20px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(14,29,46,.7); }
+      .sidebar-note b { font-size: .79rem; color: #c5d6e8; }
+      .sidebar-note p { margin: 7px 0 0; color: #71869c; font-size: .73rem; line-height: 1.5; }
+      .main { min-width: 0; padding: 28px 34px 48px; }
+      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
+      .crumb { color: var(--muted); font-size: .85rem; } .crumb b { color: var(--text); font-weight: 650; }
+      .project-actions { display: flex; align-items: center; gap: 12px; }
+      .run-id { color: #72869d; font: .76rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .avatar { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(145deg,#3c638c,#17324f); border: 1px solid #446788; font-size: .72rem; font-weight: 700; }
+      .stage-head { display: flex; justify-content: space-between; gap: 28px; align-items: flex-end; margin-bottom: 24px; }
+      .eyebrow { margin: 0 0 7px; color: var(--teal); font: 700 .73rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .13em; text-transform: uppercase; }
+      h1 { margin: 0; font-size: clamp(1.65rem,3vw,2.55rem); line-height: 1.08; letter-spacing: -.045em; font-weight: 720; }
+      .stage-head p { max-width: 700px; margin: 12px 0 0; color: var(--muted); line-height: 1.65; font-size: .96rem; }
+      .confidence { min-width: 182px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(14,29,46,.78); }
+      .confidence-label { display: flex; justify-content: space-between; color: #8397ac; font-size: .74rem; } .confidence-label b { color: var(--teal); font-size: .8rem; }
+      .meter { height: 5px; margin-top: 10px; border-radius: 999px; overflow: hidden; background: #1c2b3e; } .meter span { display: block; width: 84%; height: 100%; background: linear-gradient(90deg,#198a80,var(--teal)); border-radius: inherit; }
+      .workspace { display: grid; grid-template-columns: minmax(0,1.8fr) minmax(280px,.75fr); gap: 18px; }
+      .card { border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(145deg,rgba(14,29,46,.94),rgba(8,21,35,.94)); box-shadow: 0 20px 50px rgba(0,0,0,.15); }
+      .card-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+      .card-title { font-size: 1rem; font-weight: 680; } .card-sub { margin-top: 4px; color: var(--muted); font-size: .78rem; }
+      .source-chip { white-space: nowrap; color: #9eb1c7; font-size: .72rem; padding: 7px 9px; border: 1px solid #29405b; border-radius: 999px; background: #0a1726; }
+      .search-row { display: grid; grid-template-columns: minmax(180px,1fr) 170px auto; gap: 10px; padding: 16px 22px; border-bottom: 1px solid var(--line); }
+      .field, .select { width: 100%; min-height: 43px; border: 1px solid #29425f; border-radius: 10px; color: var(--text); background: #081523; padding: 0 13px; outline: none; }
+      .field:focus, .select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(48,230,197,.1); }
+      .primary { min-height: 43px; padding: 0 17px; border: 0; border-radius: 10px; color: #03221e; font-weight: 750; background: var(--teal); box-shadow: 0 8px 24px rgba(48,230,197,.16); }
+      .target-list { padding: 8px 12px 12px; }
+      .target-row { display: grid; grid-template-columns: 28px minmax(150px,1.25fr) repeat(3,minmax(88px,.65fr)) 80px; gap: 12px; align-items: center; padding: 14px 10px; border-bottom: 1px solid rgba(32,50,72,.7); }
+      .target-row:last-child { border-bottom: 0; } .check { width: 18px; height: 18px; accent-color: var(--teal); }
+      .gene { display: flex; align-items: center; gap: 11px; min-width: 0; }
+      .gene-mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex: 0 0 auto; color: var(--blue); background: rgba(126,167,255,.09); border: 1px solid rgba(126,167,255,.24); font: 700 .68rem ui-monospace,monospace; }
+      .gene strong { display: block; font-size: .9rem; } .gene span { display: block; color: #7890a8; font-size: .72rem; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .metric-label { display: block; color: #71859a; font-size: .69rem; margin-bottom: 5px; } .metric-val { font: 650 .83rem ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .metric-val.good { color: var(--teal); } .metric-val.mid { color: var(--amber); } .rank { justify-self: end; font: 750 .9rem ui-monospace,monospace; color: #cbd7e4; }
+      .decision { overflow: hidden; }
+      .decision-hero { padding: 20px 20px 18px; border-bottom: 1px solid var(--line); background: radial-gradient(circle at 100% 0,rgba(48,230,197,.12),transparent 52%); }
+      .ai-line { display: flex; align-items: center; gap: 8px; color: var(--teal); font-size: .74rem; font-weight: 750; letter-spacing: .08em; }
+      .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 6px rgba(48,230,197,.08); }
+      .decision h2 { font-size: 1.12rem; line-height: 1.35; margin: 18px 0 7px; } .decision-hero p { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.55; }
+      .evidence { padding: 8px 20px 16px; } .evidence-item { padding: 14px 0; border-bottom: 1px solid rgba(32,50,72,.7); } .evidence-item:last-child { border-bottom: 0; }
+      .evidence-top { display: flex; justify-content: space-between; gap: 12px; font-size: .78rem; color: #b6c5d4; } .evidence-top b { font: 650 .76rem ui-monospace,monospace; color: var(--blue); }
+      .evidence-item p { margin: 6px 0 0; font-size: .74rem; line-height: 1.45; color: #74899f; }
+      .footer-action { padding: 18px 20px 20px; border-top: 1px solid var(--line); } .selection { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: .76rem; color: #7f94aa; } .selection b { color: var(--text); } .wide { width: 100%; }
+      .ghost { min-height: 36px; padding: 0 13px; border: 1px solid #29425f; border-radius: 9px; background: #0a1726; color: #b8c8d8; font-size: .78rem; }
+      .ghost:hover { color: var(--text); border-color: #45698e; }
+      .stage-panel { display: none; animation: stage-in .32s ease both; }
+      .stage-panel.active { display: block; }
+      @keyframes stage-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+      .model-grid { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(310px,.85fr); gap: 18px; }
+      .target-tabs { display: flex; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+      .target-tab { flex: 0 0 auto; border: 1px solid #29425f; border-radius: 999px; padding: 8px 13px; color: #8ea3ba; background: transparent; font-size: .78rem; }
+      .target-tab.active { color: #05231f; background: var(--teal); border-color: var(--teal); font-weight: 700; }
+      .structure-view { position: relative; min-height: 330px; padding: 24px; overflow: hidden; background: radial-gradient(circle at 50% 46%,rgba(63,110,157,.22),transparent 54%),#071421; }
+      .structure-view svg { width: 100%; height: 250px; filter: drop-shadow(0 10px 20px rgba(0,0,0,.3)); }
+      .structure-legend { position: absolute; left: 20px; bottom: 18px; right: 20px; display: flex; flex-wrap: wrap; gap: 10px 18px; color: #7f94aa; font-size: .72rem; }
+      .legend-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; }
+      .domain-strip { padding: 16px 20px 20px; border-top: 1px solid var(--line); }
+      .domain-head { display: flex; justify-content: space-between; gap: 16px; color: #7c91a7; font-size: .73rem; margin-bottom: 10px; }
+      .domain-track { display: grid; grid-template-columns: 16% 54% 8% 22%; height: 13px; overflow: hidden; border-radius: 999px; background: #17293d; }
+      .domain-track span:nth-child(1){background:#395978}.domain-track span:nth-child(2){background:var(--blue)}.domain-track span:nth-child(3){background:var(--teal)}.domain-track span:nth-child(4){background:#2c4056}
+      .model-list { padding: 8px 18px 16px; }
+      .model-row { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 11px; padding: 12px 0; border-bottom: 1px solid rgba(32,50,72,.7); }
+      .model-row:last-child { border-bottom: 0; }
+      .model-icon { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--blue); background: rgba(126,167,255,.09); border: 1px solid rgba(126,167,255,.2); font: 700 .62rem ui-monospace,monospace; }
+      .model-name { font-size: .82rem; font-weight: 650; } .model-desc { display: block; margin-top: 3px; color: #6f849a; font-size: .69rem; }
+      .status-ok { color: var(--teal); font-size: .72rem; }
+      .site-section { margin-top: 18px; }
+      .site-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; padding: 16px 18px 18px; }
+      .site-option { position: relative; display: block; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: #091727; cursor: pointer; }
+      .site-option:has(input:checked) { border-color: var(--teal); box-shadow: 0 0 0 2px rgba(48,230,197,.1); background: linear-gradient(150deg,rgba(48,230,197,.09),#091727 52%); }
+      .site-option input { position: absolute; top: 15px; right: 15px; accent-color: var(--teal); }
+      .site-name { font-weight: 700; font-size: .88rem; } .site-score { display: block; margin: 12px 0 8px; color: var(--teal); font: 700 1.55rem/1 ui-monospace,monospace; }
+      .site-option p { margin: 0; min-height: 42px; color: #7990a7; font-size: .72rem; line-height: 1.45; }
+      .residues { display: block; margin-top: 12px; color: #9db0c3; font: .68rem ui-monospace,monospace; }
+      .stage-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 18px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: rgba(14,29,46,.7); }
+      .stage-actions p { margin: 0; color: #7d92a9; font-size: .78rem; line-height: 1.5; } .stage-actions p b { color: var(--text); }
+      .settings-grid { display: grid; grid-template-columns: minmax(0,.82fr) minmax(0,1.35fr); gap: 18px; }
+      .setting-list { padding: 16px 20px 20px; display: grid; gap: 14px; }
+      .setting label { display: block; margin-bottom: 7px; color: #8095ab; font-size: .73rem; }
+      .segmented { display: grid; grid-template-columns: repeat(2,1fr); gap: 5px; padding: 4px; border: 1px solid #263b53; border-radius: 10px; background: #071421; }
+      .segmented button { min-height: 34px; border: 0; border-radius: 7px; color: #7890a8; background: transparent; font-size: .75rem; }
+      .segmented button.active { color: var(--text); background: #183049; }
+      .pipeline { padding: 20px; }
+      .pipeline-row { display: grid; grid-template-columns: 112px minmax(100px,1fr) 70px; gap: 12px; align-items: center; margin-bottom: 18px; }
+      .pipeline-row:last-child { margin-bottom: 0; }
+      .pipeline-name { font-size: .78rem; color: #b6c6d6; } .pipeline-name span { display: block; color: #667d93; font-size: .68rem; margin-top: 3px; }
+      .bar { height: 7px; border-radius: 999px; overflow: hidden; background: #1c2c3e; } .bar i { display: block; height: 100%; width: var(--w); border-radius: inherit; background: linear-gradient(90deg,#4178b5,var(--teal)); transition: width .55s ease; }
+      .pipeline-count { text-align: right; color: var(--teal); font: 700 .78rem ui-monospace,monospace; }
+      .run-panel { margin-top: 18px; }
+      .run-summary { display: flex; flex-wrap: wrap; gap: 18px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+      .run-stat { min-width: 120px; } .run-stat span { display: block; color: #72889f; font-size: .68rem; } .run-stat b { display: block; margin-top: 5px; font: 700 1.05rem ui-monospace,monospace; }
+      .table-wrap { overflow-x: auto; }
+      .result-table { width: 100%; min-width: 820px; border-collapse: collapse; }
+      .result-table th { padding: 12px 14px; color: #70859b; font-size: .68rem; font-weight: 650; text-align: left; border-bottom: 1px solid var(--line); }
+      .result-table td { padding: 13px 14px; color: #c5d3e0; font-size: .76rem; border-bottom: 1px solid rgba(32,50,72,.64); }
+      .result-table tr:last-child td { border-bottom: 0; } .result-table tr:hover td { background: rgba(126,167,255,.035); }
+      .seq { max-width: 190px; color: #82a0bb !important; font: .68rem ui-monospace,monospace !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .score-badge { display: inline-block; min-width: 44px; padding: 5px 7px; border-radius: 7px; color: #03221e; background: var(--teal); text-align: center; font-weight: 800; }
+      .demo-note { padding: 11px 16px; border-top: 1px solid var(--line); color: #657b91; font-size: .68rem; line-height: 1.5; }
+      .toast { position: fixed; right: 22px; bottom: 22px; z-index: 30; max-width: 360px; padding: 13px 16px; border: 1px solid #2c5c64; border-radius: 12px; color: #d7fff8; background: #0c2528; box-shadow: 0 18px 50px rgba(0,0,0,.35); font-size: .8rem; opacity: 0; transform: translateY(10px); pointer-events: none; transition: .25s ease; }
+      .toast.show { opacity: 1; transform: none; }
+      dialog { width: min(620px,calc(100vw - 32px)); border: 1px solid #31506f; border-radius: 18px; padding: 0; color: var(--text); background: #0b1929; box-shadow: 0 30px 100px rgba(0,0,0,.6); }
+      dialog::backdrop { background: rgba(2,8,14,.72); backdrop-filter: blur(6px); }
+      .dialog-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+      .dialog-body { padding: 18px 20px 22px; } .audit-line { display: grid; grid-template-columns: 78px 1fr; gap: 14px; padding: 12px 0; border-bottom: 1px solid rgba(32,50,72,.7); }
+      .audit-line:last-child { border-bottom: 0; } .audit-time { color: var(--teal); font: .7rem ui-monospace,monospace; } .audit-text { color: #a7bacd; font-size: .78rem; line-height: 1.55; }
+      @media (max-width:1060px) { .shell { grid-template-columns:86px minmax(0,1fr); } .sidebar { padding-inline:14px; } .brand { justify-content:center; padding-inline:0; } .brand-copy,.nav-title,.nav-label,.nav-state,.sidebar-note { display:none; } .nav-item { display:grid; grid-template-columns:1fr; place-items:center; } .target-row { grid-template-columns:28px minmax(140px,1fr) repeat(2,minmax(80px,.6fr)) 60px; } .target-row .optional { display:none; } .model-grid,.settings-grid { grid-template-columns:1fr; } }
+      @media (max-width:760px) { .shell { display:block; } .sidebar { position:static; width:100%; height:auto; padding:14px 16px; border-right:0; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:14px; } .brand { padding:0; } .brand-copy { display:block; } .nav { display:flex; margin-left:auto; } .nav-item { min-width:42px; padding:10px; } .main { padding:22px 16px 38px; } .topbar { margin-bottom:22px; } .run-id,.audit-button { display:none; } .stage-head { align-items:stretch; flex-direction:column; } .confidence { min-width:0; } .workspace { grid-template-columns:1fr; } .search-row { grid-template-columns:1fr; } .target-row { grid-template-columns:28px 1fr 64px; gap:8px; } .target-row .metric { display:none; } .decision { order:-1; } .site-grid { grid-template-columns:1fr; } .stage-actions { align-items:stretch; flex-direction:column; } .stage-actions .primary { width:100%; } .structure-view { min-height:280px; padding:12px; } .pipeline-row { grid-template-columns:92px 1fr 58px; } }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" aria-label="设计流程">
+        <div class="brand"><div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M7 6c10 0 8 20 18 20M25 6C15 6 17 26 7 26" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M10 11h12M10 21h12" stroke="#7ea7ff" stroke-width="1.7" stroke-linecap="round"/></svg></div><div class="brand-copy"><span class="brand-name">BinderOS</span><span class="brand-meta">AI protein design</span></div></div>
+        <div class="nav-title">DESIGN PIPELINE</div>
+        <nav class="nav">
+          <button class="nav-item active" data-stage="1" aria-pressed="true"><span class="nav-index">01</span><span class="nav-label"><strong>靶点发现</strong><span>文献与可行性</span></span><span class="nav-state live"></span></button>
+          <button class="nav-item" data-stage="2" aria-pressed="false"><span class="nav-index">02</span><span class="nav-label"><strong>结构与位点</strong><span>多模型联合评估</span></span><span class="nav-state"></span></button>
+          <button class="nav-item" data-stage="3" aria-pressed="false"><span class="nav-index">03</span><span class="nav-label"><strong>Binder 设计</strong><span>生成、筛选与优化</span></span><span class="nav-state"></span></button>
+        </nav>
+        <div class="sidebar-note"><b>Human-in-the-loop</b><p>关键节点由研究员确认；每项 AI 决策保留证据、评分与版本记录。</p></div>
+      </aside>
+      <main class="main">
+        <header class="topbar"><div class="crumb">项目 / <b>人类免疫调节靶点探索</b></div><div class="project-actions"><button class="ghost audit-button" id="auditButton">决策日志</button><span class="run-id">RUN · BOS-2409-018</span><div class="avatar" aria-label="当前用户">YL</div></div></header>
+        <section class="stage-panel active" data-panel="1">
+        <section class="stage-head">
+          <div><p class="eyebrow">Stage 01 · target discovery</p><h1>从物种出发，锁定值得设计的靶点</h1><p>AI 正在汇总文献、蛋白定位、疾病关联、可成药性与同源风险，为每个候选靶点生成可追溯的选择依据。</p></div>
+          <div class="confidence"><div class="confidence-label"><span>证据覆盖度</span><b>84%</b></div><div class="meter"><span></span></div></div>
+        </section>
+        <div class="workspace">
+          <section class="card">
+            <div class="card-head"><div><div class="card-title">候选靶点评估</div><div class="card-sub">已从 1,286 个蛋白中筛选出 24 个候选</div></div><span class="source-chip">16 个数据库 · 142 篇文献</span></div>
+            <div class="search-row"><input class="field" id="speciesInput" value="Homo sapiens" aria-label="物种" /><select class="select" aria-label="研究方向"><option>免疫调节</option><option>肿瘤微环境</option><option>病原体感染</option></select><button class="primary" id="searchButton">更新检索</button></div>
+            <div class="target-list" aria-label="候选靶点列表">
+              <label class="target-row"><input class="check" type="checkbox" checked /><span class="gene"><span class="gene-mark">TG</span><span><strong>TIGIT</strong><span>T cell immunoreceptor</span></span></span><span class="metric"><span class="metric-label">疾病证据</span><span class="metric-val good">0.93</span></span><span class="metric"><span class="metric-label">胞外可及性</span><span class="metric-val good">高</span></span><span class="metric optional"><span class="metric-label">同源风险</span><span class="metric-val">低</span></span><span class="rank">#01</span></label>
+              <label class="target-row"><input class="check" type="checkbox" checked /><span class="gene"><span class="gene-mark">F4</span><span><strong>FAP</strong><span>Fibroblast activation protein</span></span></span><span class="metric"><span class="metric-label">疾病证据</span><span class="metric-val good">0.89</span></span><span class="metric"><span class="metric-label">胞外可及性</span><span class="metric-val good">高</span></span><span class="metric optional"><span class="metric-label">同源风险</span><span class="metric-val mid">中</span></span><span class="rank">#02</span></label>
+              <label class="target-row"><input class="check" type="checkbox" /><span class="gene"><span class="gene-mark">C7</span><span><strong>CD47</strong><span>Integrin associated protein</span></span></span><span class="metric"><span class="metric-label">疾病证据</span><span class="metric-val good">0.87</span></span><span class="metric"><span class="metric-label">胞外可及性</span><span class="metric-val good">高</span></span><span class="metric optional"><span class="metric-label">同源风险</span><span class="metric-val mid">中</span></span><span class="rank">#03</span></label>
+              <label class="target-row"><input class="check" type="checkbox" /><span class="gene"><span class="gene-mark">I2</span><span><strong>IL23R</strong><span>Interleukin 23 receptor</span></span></span><span class="metric"><span class="metric-label">疾病证据</span><span class="metric-val">0.81</span></span><span class="metric"><span class="metric-label">胞外可及性</span><span class="metric-val good">高</span></span><span class="metric optional"><span class="metric-label">同源风险</span><span class="metric-val">低</span></span><span class="rank">#04</span></label>
+            </div>
+          </section>
+          <aside class="card decision">
+            <div class="decision-hero"><div class="ai-line"><span class="pulse"></span>AI 决策摘要</div><h2>优先推进 TIGIT 与 FAP</h2><p>两者同时满足疾病证据、表面可及性与结构可设计性阈值，且可形成互补的验证组合。</p></div>
+            <div class="evidence"><div class="evidence-item"><div class="evidence-top"><span>生物学证据</span><b>9.2 / 10</b></div><p>近期文献与临床管线一致支持免疫调控机制。</p></div><div class="evidence-item"><div class="evidence-top"><span>结构可设计性</span><b>8.7 / 10</b></div><p>胞外结构域完整，存在连续且保守性较低的可结合表面。</p></div><div class="evidence-item"><div class="evidence-top"><span>实验转化风险</span><b>低–中</b></div><p>建议在设计阶段纳入跨物种反应性与非特异结合惩罚项。</p></div></div>
+            <div class="footer-action"><div class="selection"><span>已选靶点</span><b id="targetCount">2 / 6</b></div><button class="primary wide" data-goto="2">进入结构与位点评估 →</button></div>
+          </aside>
+        </div>
+        </section>
+
+        <section class="stage-panel" data-panel="2">
+          <section class="stage-head">
+            <div><p class="eyebrow">Stage 02 · structure &amp; epitope</p><h1>多模型会诊，找到最值得结合的表面</h1><p>对目标序列执行结构预测、跨膜拓扑、信号肽、表面可及性、保守性与潜在脱靶联合分析，再由 AI 对候选位点进行排序。</p></div>
+            <div class="confidence"><div class="confidence-label"><span>结构置信度</span><b>91%</b></div><div class="meter"><span style="width:91%"></span></div></div>
+          </section>
+          <div class="model-grid">
+            <section class="card">
+              <div class="card-head"><div><div class="card-title">TIGIT · 结构与拓扑</div><div class="card-sub">UniProt Q495A1 · 胞外区 22–141 aa</div></div><span class="source-chip">模型共识 5 / 6</span></div>
+              <div class="target-tabs"><button class="target-tab active">TIGIT</button><button class="target-tab">FAP</button><button class="target-tab">+ 添加靶点</button></div>
+              <div class="structure-view" aria-label="TIGIT 结构位点示意图">
+                <svg viewBox="0 0 620 250" role="img" aria-label="预测结构与三处候选结合位点">
+                  <defs><linearGradient id="ribbon" x1="0" x2="1"><stop stop-color="#527fc7"/><stop offset=".5" stop-color="#7ea7ff"/><stop offset="1" stop-color="#30e6c5"/></linearGradient></defs>
+                  <path d="M128 176C74 121 118 65 192 89c59 19 73 92 139 72 76-24 40-105 113-111 58-5 93 60 57 101-37 42-112 21-147 58-24 25-17 56-17 56" fill="none" stroke="url(#ribbon)" stroke-width="18" stroke-linecap="round" opacity=".92"/>
+                  <path d="M148 185c44-22 18-70 61-86 48-18 83 27 65 66-20 41 23 70 68 45 59-34 118 14 103 58" fill="none" stroke="#365874" stroke-width="7" stroke-linecap="round" opacity=".8"/>
+                  <g><circle cx="184" cy="87" r="28" fill="#30e6c5" opacity=".12"/><circle cx="184" cy="87" r="7" fill="#30e6c5"/><text x="201" y="76" fill="#d9fff8" font-size="14" font-family="system-ui">位点 A</text><text x="201" y="94" fill="#7691a9" font-size="11" font-family="system-ui">AI 推荐 · 0.92</text></g>
+                  <g><circle cx="446" cy="57" r="23" fill="#7ea7ff" opacity=".12"/><circle cx="446" cy="57" r="6" fill="#7ea7ff"/><text x="462" y="52" fill="#dbe6ff" font-size="13" font-family="system-ui">位点 B</text></g>
+                  <g><circle cx="369" cy="202" r="20" fill="#ffc66d" opacity=".12"/><circle cx="369" cy="202" r="6" fill="#ffc66d"/><text x="385" y="206" fill="#ffe7bd" font-size="13" font-family="system-ui">位点 C</text></g>
+                </svg>
+                <div class="structure-legend"><span><i class="legend-dot" style="background:#30e6c5"></i>高可设计性表面</span><span><i class="legend-dot" style="background:#7ea7ff"></i>预测 IgV 结构域</span><span><i class="legend-dot" style="background:#ffc66d"></i>潜在糖基化邻域</span></div>
+              </div>
+              <div class="domain-strip"><div class="domain-head"><span>序列拓扑 · 244 aa</span><span>DeepTMHMM / SignalP 共识</span></div><div class="domain-track" title="信号肽、胞外域、跨膜区、胞内尾"><span></span><span></span><span></span><span></span></div></div>
+            </section>
+            <aside class="card">
+              <div class="card-head"><div><div class="card-title">模型编排</div><div class="card-sub">运行记录与关键输出</div></div><span class="source-chip">均已完成</span></div>
+              <div class="model-list">
+                <div class="model-row"><span class="model-icon">AF</span><span><span class="model-name">AlphaFold 3</span><span class="model-desc">结构预测 · pLDDT 89.4</span></span><span class="status-ok">完成</span></div>
+                <div class="model-row"><span class="model-icon">TM</span><span><span class="model-name">DeepTMHMM</span><span class="model-desc">跨膜区 142–164 aa</span></span><span class="status-ok">完成</span></div>
+                <div class="model-row"><span class="model-icon">SP</span><span><span class="model-name">SignalP 6.0</span><span class="model-desc">信号肽切割位点 21 aa</span></span><span class="status-ok">完成</span></div>
+                <div class="model-row"><span class="model-icon">NS</span><span><span class="model-name">NetSurfP-3.0</span><span class="model-desc">溶剂可及性与二级结构</span></span><span class="status-ok">完成</span></div>
+                <div class="model-row"><span class="model-icon">FS</span><span><span class="model-name">Foldseek + MSA</span><span class="model-desc">结构同源与保守性扫描</span></span><span class="status-ok">完成</span></div>
+                <div class="model-row"><span class="model-icon">AI</span><span><span class="model-name">决策代理</span><span class="model-desc">证据融合、矛盾检测与排序</span></span><span class="status-ok">完成</span></div>
+              </div>
+            </aside>
+          </div>
+          <section class="card site-section">
+            <div class="card-head"><div><div class="card-title">候选结合位点</div><div class="card-sub">综合表面连续性、保守性、糖基化、功能机制与脱靶风险</div></div><span class="source-chip">选择 1 个位点</span></div>
+            <div class="site-grid">
+              <label class="site-option"><input type="radio" name="site" value="A" checked /><span class="site-name">位点 A · FG loop</span><span class="site-score">0.92</span><p>功能相关且高度暴露，远离糖基化位点；预计可形成 820 Å² 界面。</p><span class="residues">Y72 · N74 · K82 · S84 · Q88</span></label>
+              <label class="site-option"><input type="radio" name="site" value="B" /><span class="site-name">位点 B · CC′ loop</span><span class="site-score">0.84</span><p>表面连续性较好，但邻近保守受体界面，需控制交叉反应。</p><span class="residues">T45 · I47 · S49 · K51 · G53</span></label>
+              <label class="site-option"><input type="radio" name="site" value="C" /><span class="site-name">位点 C · β-sheet edge</span><span class="site-score">0.71</span><p>结构稳定但局部可及性偏低，且受 N101 潜在糖基化影响。</p><span class="residues">R96 · V98 · N101 · T103</span></label>
+            </div>
+          </section>
+          <div class="stage-actions"><p>当前决策：<b id="siteDecision">TIGIT · 位点 A</b><br/>所有模型输入、版本、阈值与 AI 推理摘要将写入项目审计记录。</p><div><button class="ghost" data-goto="1">返回靶点选择</button> <button class="primary" data-goto="3">确认位点并设计 Binder →</button></div></div>
+        </section>
+
+        <section class="stage-panel" data-panel="3">
+          <section class="stage-head">
+            <div><p class="eyebrow">Stage 03 · design, rank &amp; optimize</p><h1>从数千个设计中，交付可进入实验的候选集</h1><p>生成式模型提出骨架与序列，多模型完成结构、亲和力、特异性、聚集和可制造性筛选；高分候选进入定向迭代后再次复评。</p></div>
+            <div class="confidence"><div class="confidence-label"><span>候选质量门槛</span><b>严格</b></div><div class="meter"><span style="width:96%"></span></div></div>
+          </section>
+          <div class="settings-grid">
+            <section class="card">
+              <div class="card-head"><div><div class="card-title">设计任务</div><div class="card-sub" id="designTaskSubtitle">TIGIT · 位点 A</div></div><span class="source-chip">Research use only</span></div>
+              <div class="setting-list">
+                <div class="setting"><label for="binderType">Binder 类型</label><select class="select" id="binderType"><option>De novo miniprotein</option><option>Nanobody / VHH</option><option>Cyclic peptide</option></select></div>
+                <div class="setting"><label>最终交付数量</label><div class="segmented" id="countSelector"><button class="active" data-count="10">10 个</button><button data-count="15">15 个</button></div></div>
+                <div class="setting"><label for="rounds">优化轮次</label><select class="select" id="rounds"><option>2 轮（推荐）</option><option>1 轮</option><option>3 轮</option></select></div>
+                <div class="setting"><label for="constraint">关键约束</label><select class="select" id="constraint"><option>亲和力 + 特异性 + 可制造性</option><option>优先极致亲和力</option><option>优先热稳定性</option></select></div>
+                <button class="primary wide" id="runDesign">启动设计与优化</button>
+              </div>
+            </section>
+            <section class="card">
+              <div class="card-head"><div><div class="card-title">自动化筛选漏斗</div><div class="card-sub">RFdiffusion / ProteinMPNN / AF3 / Rosetta / 可开发性预测联合编排</div></div><span class="source-chip" id="runStatus">示例任务已完成</span></div>
+              <div class="pipeline">
+                <div class="pipeline-row"><span class="pipeline-name">骨架生成<span>RFdiffusion</span></span><span class="bar"><i style="--w:100%"></i></span><span class="pipeline-count">5,000</span></div>
+                <div class="pipeline-row"><span class="pipeline-name">序列设计<span>ProteinMPNN</span></span><span class="bar"><i style="--w:84%"></i></span><span class="pipeline-count">4,208</span></div>
+                <div class="pipeline-row"><span class="pipeline-name">结构复核<span>AF3 / ipTM</span></span><span class="bar"><i style="--w:38%"></i></span><span class="pipeline-count">1,912</span></div>
+                <div class="pipeline-row"><span class="pipeline-name">多目标筛选<span>界面 / 脱靶 / 聚集</span></span><span class="bar"><i style="--w:16%"></i></span><span class="pipeline-count">806</span></div>
+                <div class="pipeline-row"><span class="pipeline-name">迭代优化<span>高分簇 × 2 轮</span></span><span class="bar"><i style="--w:3%"></i></span><span class="pipeline-count">160</span></div>
+                <div class="pipeline-row"><span class="pipeline-name">最终复评<span>多样性约束</span></span><span class="bar"><i style="--w:1%"></i></span><span class="pipeline-count">15</span></div>
+              </div>
+            </section>
+          </div>
+          <section class="card run-panel">
+            <div class="card-head"><div><div class="card-title">最终候选 Binder</div><div class="card-sub">按综合评分排序，同时保留序列多样性，避免单一骨架簇占满候选集</div></div><button class="ghost" id="downloadButton">下载候选 CSV</button></div>
+            <div class="run-summary"><div class="run-stat"><span>最佳综合评分</span><b style="color:var(--teal)">94.8</b></div><div class="run-stat"><span>预测 pLDDT</span><b>91.7</b></div><div class="run-stat"><span>预测 ipTM</span><b>0.86</b></div><div class="run-stat"><span>骨架簇</span><b>8</b></div><div class="run-stat"><span>聚集高风险</span><b style="color:var(--teal)">0</b></div></div>
+            <div class="table-wrap"><table class="result-table"><thead><tr><th>排名</th><th>候选 ID</th><th>序列预览</th><th>pLDDT</th><th>ipTM</th><th>ΔG 预测</th><th>可开发性</th><th>综合分</th></tr></thead><tbody id="resultBody"></tbody></table></div>
+            <div class="demo-note">当前页面为产品工作流原型，候选序列与评分均为演示数据，不可直接用于实验。生产系统应保留模型版本、原始输出、适用范围与人工复核结论。</div>
+          </section>
+          <div class="stage-actions"><p>交付包建议包含：<b>FASTA、结构文件、模型原始评分、风险说明、实验优先级与完整审计记录</b>。</p><div><button class="ghost" data-goto="2">返回位点评估</button> <button class="primary" id="reportButton">生成最终报告</button></div></div>
+        </section>
+      </main>
+    </div>
+    <dialog id="auditDialog">
+      <div class="dialog-head"><div><div class="card-title">AI 决策日志</div><div class="card-sub">关键节点、证据与人工确认均可追溯</div></div><button class="ghost" id="closeAudit">关闭</button></div>
+      <div class="dialog-body"><div class="audit-line"><span class="audit-time">09:12:08</span><span class="audit-text">以 Homo sapiens 和免疫调节为范围，汇总 UniProt、Open Targets、PDB 与文献证据。</span></div><div class="audit-line"><span class="audit-time">09:18:41</span><span class="audit-text">TIGIT 与 FAP 在疾病关联、胞外可及性和设计可行性上达到联合阈值；CD47 因系统性表达风险被降权。</span></div><div class="audit-line"><span class="audit-time">09:26:03</span><span class="audit-text">结构模型对 TIGIT IgV 域形成一致判断；DeepTMHMM 与 SignalP 输出无冲突。</span></div><div class="audit-line"><span class="audit-time">09:31:56</span><span class="audit-text">位点 A 在暴露度、功能相关性和低保守性上领先，建议作为首轮设计位点。</span></div></div>
+    </dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script>
+      const candidateData = [
+        ['BOS-TG-014','MKEVEQLKQKLEAAYKAA...','91.7','0.86','−15.2','A','94.8'],
+        ['BOS-TG-031','MDKIRKVLENLEKSGVE...','90.9','0.85','−14.8','A','93.6'],
+        ['BOS-TG-082','MSEKLAEILEKLGYTVE...','92.1','0.83','−14.3','A','92.9'],
+        ['BOS-TG-107','MKKAVEQLKELDASLKE...','89.8','0.87','−13.9','A−','92.1'],
+        ['BOS-TG-126','MDELRKAVEELKSKYEA...','91.2','0.82','−14.1','A','91.5'],
+        ['BOS-TG-203','MPEKLEAILEKAGVEVK...','88.9','0.84','−13.6','A−','90.7'],
+        ['BOS-TG-244','MDRVKQLEEAVKAGYEV...','90.4','0.81','−13.8','A','90.1'],
+        ['BOS-TG-318','MAEIRKILDELGADVEK...','89.6','0.82','−13.2','A−','89.7'],
+        ['BOS-TG-355','MKKLEEVAKKLGAEVEA...','88.7','0.83','−12.9','A','89.2'],
+        ['BOS-TG-401','MDSLRQVLENLKESYEA...','90.1','0.79','−13.4','A−','88.9'],
+        ['BOS-TG-427','MEEKLKAIEQLGFKVEA...','87.9','0.81','−12.7','A','88.2'],
+        ['BOS-TG-466','MRKVEELKQKLGADVEA...','89.3','0.78','−12.9','A−','87.8'],
+        ['BOS-TG-502','MTEVKKLDELAKSGFEV...','88.1','0.80','−12.5','A','87.4'],
+        ['BOS-TG-531','MPELKEIIKQLGAKVEA...','87.6','0.79','−12.6','A−','86.9'],
+        ['BOS-TG-588','MDRLKKAVEELGARVEA...','88.4','0.77','−12.8','A−','86.5']
+      ];
+      let deliverCount = 10;
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+      function showToast(message) { const toast = $('#toast'); toast.textContent = message; toast.classList.add('show'); clearTimeout(window.toastTimer); window.toastTimer = setTimeout(() => toast.classList.remove('show'), 2600); }
+      function switchStage(stage) {
+        $$('.stage-panel').forEach(panel => panel.classList.toggle('active', panel.dataset.panel === String(stage)));
+        $$('.nav-item').forEach(item => { const active = item.dataset.stage === String(stage); item.classList.toggle('active', active); item.setAttribute('aria-pressed', active); $('.nav-state', item).classList.toggle('live', active); });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      function renderResults() {
+        $('#resultBody').innerHTML = candidateData.slice(0, deliverCount).map((row, index) => `<tr><td>#${String(index + 1).padStart(2,'0')}</td><td><b>${row[0]}</b></td><td class="seq" title="${row[1]}">${row[1]}</td><td>${row[2]}</td><td>${row[3]}</td><td>${row[4]} kcal/mol</td><td>${row[5]}</td><td><span class="score-badge">${row[6]}</span></td></tr>`).join('');
+      }
+      $$('.nav-item').forEach(button => button.addEventListener('click', () => switchStage(button.dataset.stage)));
+      $$('[data-goto]').forEach(button => button.addEventListener('click', () => switchStage(button.dataset.goto)));
+      $$('.check').forEach(input => input.addEventListener('change', () => { const count = $$('.check:checked').length; $('#targetCount').textContent = `${count} / 6`; showToast(`已选择 ${count} 个靶点`); }));
+      $('#searchButton').addEventListener('click', () => { const button = $('#searchButton'); const species = $('#speciesInput').value.trim() || 'Homo sapiens'; button.disabled = true; button.textContent = '检索中…'; setTimeout(() => { button.disabled = false; button.textContent = '更新检索'; showToast(`${species} 的证据检索已更新 · 142 篇文献`); }, 900); });
+      $$('input[name="site"]').forEach(input => input.addEventListener('change', () => { const decision = `TIGIT · 位点 ${input.value}`; $('#siteDecision').textContent = decision; $('#designTaskSubtitle').textContent = decision; showToast(`已选择位点 ${input.value}`); }));
+      $$('.target-tab').forEach(tab => tab.addEventListener('click', () => { if (tab.textContent.startsWith('+')) return showToast('可在生产版接入新的目标序列'); $$('.target-tab').forEach(x => x.classList.toggle('active', x === tab)); showToast(`已切换到 ${tab.textContent} 结构视图`); }));
+      $$('#countSelector button').forEach(button => button.addEventListener('click', () => { deliverCount = Number(button.dataset.count); $$('#countSelector button').forEach(x => x.classList.toggle('active', x === button)); renderResults(); showToast(`最终交付数量设为 ${deliverCount} 个`); }));
+      $('#runDesign').addEventListener('click', () => { const button = $('#runDesign'); const status = $('#runStatus'); const bars = $$('.bar i'); button.disabled = true; button.textContent = '设计任务运行中…'; status.textContent = '模型正在编排'; bars.forEach(bar => { bar.dataset.width = bar.style.getPropertyValue('--w'); bar.style.setProperty('--w','0%'); }); setTimeout(() => bars.forEach(bar => bar.style.setProperty('--w',bar.dataset.width)), 80); setTimeout(() => { button.disabled = false; button.textContent = '重新运行设计与优化'; status.textContent = '任务已完成'; renderResults(); showToast(`已完成两轮优化，保留 ${deliverCount} 个高质量候选`); }, 2300); });
+      $('#downloadButton').addEventListener('click', () => { const header = ['rank','candidate_id','sequence_preview','pLDDT','ipTM','predicted_dG_kcal_mol','developability','composite_score']; const lines = [header.join(','), ...candidateData.slice(0, deliverCount).map((row, i) => [i + 1, ...row].join(','))]; const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'BinderOS_demo_candidates.csv'; link.click(); URL.revokeObjectURL(link.href); showToast('候选 CSV 已生成'); });
+      $('#reportButton').addEventListener('click', () => showToast('最终报告已进入生成队列 · 将包含完整模型与风险记录'));
+      $('#auditButton').addEventListener('click', () => $('#auditDialog').showModal());
+      $('#closeAudit').addEventListener('click', () => $('#auditDialog').close());
+      $('#auditDialog').addEventListener('click', event => { if (event.target === $('#auditDialog')) $('#auditDialog').close(); });
+      renderResults();
+      function registerAgentTools() {
+        const context = document.modelContext;
+        if (!context?.registerTool) return;
+        const register = tool => { try { void Promise.resolve(context.registerTool(tool)).catch(console.error); } catch (error) { console.error(error); } };
+        register({
+          name: 'navigate_pipeline_stage', title: '切换设计阶段',
+          description: '在 BinderOS 可见界面中切换到靶点发现、结构与位点或 Binder 设计阶段。',
+          inputSchema: { type: 'object', properties: { stage: { type: 'integer', minimum: 1, maximum: 3 } }, required: ['stage'], additionalProperties: false },
+          annotations: { readOnlyHint: false, untrustedContentHint: false },
+          execute(input) { if (!input || ![1,2,3].includes(input.stage)) throw new Error('stage 必须为 1、2 或 3'); switchStage(input.stage); return { stage: input.stage, visible: true }; }
+        });
+        register({
+          name: 'configure_binder_design', title: '配置 Binder 设计',
+          description: '在可见界面中设置 TIGIT 结合位点、Binder 类型与最终交付数量，并进入设计阶段，但不启动运行。',
+          inputSchema: { type: 'object', properties: { site: { type: 'string', enum: ['A','B','C'] }, binderType: { type: 'string', enum: ['De novo miniprotein','Nanobody / VHH','Cyclic peptide'] }, outputCount: { type: 'integer', enum: [10,15] } }, required: ['site','binderType','outputCount'], additionalProperties: false },
+          annotations: { readOnlyHint: false, untrustedContentHint: false },
+          execute(input) { const site = $(`input[name="site"][value="${input.site}"]`); if (!site) throw new Error('无效结合位点'); site.checked = true; site.dispatchEvent(new Event('change')); $('#binderType').value = input.binderType; const countButton = $(`#countSelector button[data-count="${input.outputCount}"]`); if (!countButton) throw new Error('outputCount 必须为 10 或 15'); countButton.click(); switchStage(3); return { target: 'TIGIT', site: input.site, binderType: input.binderType, outputCount: input.outputCount, status: 'configured' }; }
+        });
+        register({
+          name: 'run_demo_binder_design', title: '运行演示设计',
+          description: '启动 BinderOS 演示设计与两轮优化，并在可见界面中等待模拟任务完成。仅产生演示候选。',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          annotations: { readOnlyHint: false, untrustedContentHint: false },
+          async execute(input) { if (input && Object.keys(input).length) throw new Error('该工具不接受参数'); switchStage(3); $('#runDesign').click(); await new Promise(resolve => setTimeout(resolve, 2400)); return { status: 'complete', outputCount: deliverCount, dataClass: 'demo_only' }; }
+        });
+      }
+      registerAgentTools();
+    </script>
+  </body>
+</html>
