@@ -22,8 +22,4 @@ jobs:
       - run: pip install -r gateway/requirements.txt httpx==0.28.1
       - run: python -m unittest gateway/test_gateway.py
       - name: Reject committed credentials
-        run: |
-          if git grep -nE '(sk-[A-Za-z0-9]{16,}|DEEPSEEK_API_KEY=.+|MODEL_GATEWAY_TOKEN=.+)' -- ':!*.example'; then
-            echo 'Potential credential found in tracked source.'
-            exit 1
-          fi
+        run: node scripts/check-secrets.mjs
