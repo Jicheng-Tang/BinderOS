@@ -29,6 +29,11 @@ async function fetchJson(url, init = {}, timeoutMs = 15000) {
   return response.json();
 }
 
+async function fetchEvidence(url) {
+  try { return await fetchJson(url); }
+  catch { return fetchJson(url); }
+}
+
 function normalizeLiterature(data) {
   return (data?.resultList?.result || []).slice(0, 10).map((item, index) => ({
     id: item.pmid ? `PMID:${item.pmid}` : item.pmcid || `EPMC:${index + 1}`,
@@ -133,8 +138,8 @@ async function handleResearch(request, env, progress = () => {}) {
   const literatureQuery = encodeURIComponent(`(${species}) AND (${topic}) AND (FIRST_PDATE:[2021-01-01 TO ${new Date().toISOString().slice(0, 10)}])`);
   const proteinQuery = encodeURIComponent(`(organism_name:\"${species}\") AND (reviewed:true) AND (${topic})`);
   const [literatureResult, proteinResult] = await Promise.allSettled([
-    fetchJson(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${literatureQuery}&format=json&pageSize=10&resultType=core`),
-    fetchJson(`https://rest.uniprot.org/uniprotkb/search?query=${proteinQuery}&format=json&size=10&fields=accession,id,protein_name,gene_names,organism_name,length`),
+    fetchEvidence(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${literatureQuery}&format=json&pageSize=10&resultType=core`),
+    fetchEvidence(`https://rest.uniprot.org/uniprotkb/search?query=${proteinQuery}&format=json&size=10&fields=accession,id,protein_name,gene_names,organism_name,length`),
   ]);
   const literature = literatureResult.status === "fulfilled" ? normalizeLiterature(literatureResult.value) : [];
   const proteins = proteinResult.status === "fulfilled" ? normalizeProteins(proteinResult.value) : [];
@@ -149,6 +154,13 @@ async function handleResearch(request, env, progress = () => {}) {
     }
   }
   report.source_status = { europe_pmc: literatureResult.status, uniprot: proteinResult.status };
+  report.source_errors = {};
+  for (const [name, result] of [["europe_pmc", literatureResult], ["uniprot", proteinResult]]) {
+    if (result.status === "rejected") {
+      report.source_errors[name] = String(result.reason?.message || "request_failed").slice(0, 200);
+      report.caveats.push(`${name} 请求失败（已重试），本报告缺少该来源，不能将其理解为没有相关研究。`);
+    }
+  }
   return json(report);
 }
 

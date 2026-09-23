@@ -32,6 +32,18 @@ test('missing gateway is explicit', async () => {
   const r = await worker.fetch(new Request('http://test/api/models/jobs', { method: 'POST' }), {});
   assert.equal(r.status, 503);
 });
+test('evidence retry and partial-source warning', async t => {
+  let attempts = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (url.includes('europepmc')) { attempts++; throw new Error('upstream_503'); }
+    return Response.json({ results: [protein] });
+  });
+  const r = await worker.fetch(new Request('http://test/api/research', { method: 'POST', body: JSON.stringify({ species: 'Homo sapiens' }) }), {});
+  const report = await r.json();
+  assert.equal(attempts, 2);
+  assert.equal(report.source_errors.europe_pmc, 'upstream_503');
+  assert.ok(report.caveats.some(value => value.includes('请求失败')));
+});
 test('health does not advertise uninstalled models', async t => {
   t.mock.method(globalThis, 'fetch', async () => Response.json({ status: 'ok', models: ['deeptmhmm2'], device: 'cpu' }));
   const r = await worker.fetch(new Request('http://test/api/health'), { MODEL_GATEWAY_URL: 'https://gateway.example' });
