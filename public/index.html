@@ -276,7 +276,9 @@
                 <label for="modelSequence">提交真实序列进行结构或拓扑预测</label>
                 <textarea class="sequence-input" id="modelSequence" placeholder="粘贴氨基酸序列（仅 A–Z，不含 FASTA 标题）"></textarea>
                 <div class="integration-actions"><select class="select" id="modelSelect" aria-label="模型"><option value="deeptmhmm2">DeepTMHMM2</option><option value="alphafold3">AlphaFold 3</option></select><button class="primary" id="modelJobButton">提交模型任务</button></div>
-                <p class="job-status" id="modelJobStatus">未提交任务。需要先配置受保护的模型网关。</p>
+                <p class="job-status" id="modelJobStatus" role="status">未提交任务。需要先配置受保护的模型网关。</p>
+                <button class="ghost" id="resumeModelJob" hidden>恢复上次任务</button>
+                <div id="modelJobResult" style="overflow-wrap:anywhere"></div>
               </div>
             </aside>
           </div>
@@ -410,13 +412,21 @@
       }
       const escapeHTML = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
       const safeUrl = value => { try { const url = new URL(String(value)); return url.protocol === 'https:' ? url.href : '#'; } catch { return '#'; } };
+      let lastReport = null;
+      function downloadJSON(value, name) {
+        const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
+        const link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
       function renderResearch(report) {
-        const mode = report.status === 'ai_synthesized' ? `DeepSeek · ${report.provenance?.ai_model || 'AI'}` : '证据标准化 · 未使用 AI';
+        lastReport = report;
+        const mode = report.status === 'ai_synthesized' ? `DeepSeek · ${report.provenance?.ai_model || 'AI'}` : report.ai_error ? 'AI 归并失败 · 可重试' : '证据标准化 · 未使用 AI';
         $('#researchMode').textContent = mode;
-        const candidates = (report.candidates || []).slice(0, 6).map(item => `<article><h3>${escapeHTML(item.symbol)}<span>${Math.round(Number(item.evidence_strength || 0) * 100)}%</span></h3><p>${escapeHTML(item.protein_name)}</p><p>${escapeHTML(item.rationale)}</p></article>`).join('') || '<p class="report-summary">未找到可安全归纳的候选；请调整物种或研究方向。</p>';
+        const candidates = (report.candidates || []).slice(0, 6).map(item => `<article><h3>${escapeHTML(item.symbol)}</h3><p>${escapeHTML(item.protein_name)}</p><p>${escapeHTML(item.rationale)}</p><p>待核查：${escapeHTML((item.risks || []).join('；'))}</p>${(item.sources || []).map((url, i) => `<a href="${safeUrl(url)}" target="_blank" rel="noreferrer">证据 ${i + 1}</a>`).join(' · ')}</article>`).join('') || '<p class="report-summary">本次证据不足以支持候选推荐；可更换具体研究方向重试。</p>';
         const sources = (report.literature || []).slice(0, 6).map(item => `<a class="source-item" href="${safeUrl(item.sourceUrl)}" target="_blank" rel="noreferrer">${escapeHTML(item.title)}<br><span>${escapeHTML(item.journal)} · ${escapeHTML(item.year)} · cited ${Number(item.citedBy || 0)}</span></a>`).join('') || '<p class="report-summary">本次未返回文献记录。</p>';
         $('#researchState').className = 'research-grid';
         $('#researchState').innerHTML = `<div class="report-main"><div class="report-meta"><span class="report-chip">${escapeHTML(report.schema_version || 'binderos.target-report.v1')}</span><span class="report-chip">${escapeHTML(report.query?.species)}</span><span class="report-chip">${escapeHTML(report.query?.topic)}</span></div><p class="report-summary">${escapeHTML(report.summary)}</p><div class="candidate-live">${candidates}</div></div><aside class="source-list"><h3>可追溯文献</h3>${sources}</aside>`;
+        const notes = document.createElement('p'); notes.className = 'report-summary'; notes.textContent = (report.caveats || []).join('；'); $('.report-main').append(notes);
+        const download = document.createElement('button'); download.className = 'ghost'; download.textContent = '下载完整报告 JSON'; download.onclick = () => downloadJSON(lastReport, 'BinderOS-target-report.json'); $('.report-main').append(download);
       }
       async function runResearch({ species, topic } = {}) {
         const button = $('#searchButton');
@@ -427,11 +437,24 @@
         $('#researchState').className = 'research-state';
         $('#researchState').innerHTML = '<strong>正在访问 Europe PMC 与 UniProt。</strong> 数据返回后将按 BinderOS 标准 schema 归并；未配置 DeepSeek 时不会生成 AI 结论。';
         try {
-          const response = await fetch('/api/research', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ species: resolvedSpecies, topic: resolvedTopic }) });
-          const report = await response.json();
-          if (!response.ok) throw new Error(report.message || report.error || '检索失败');
+          const response = await fetch('/api/research', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' }, body: JSON.stringify({ species: resolvedSpecies, topic: resolvedTopic }), signal: AbortSignal.timeout(140000) });
+          if (!response.ok) throw new Error(`请求失败 (${response.status})`);
+          const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let report;
+          while (true) {
+            const { value, done } = await reader.read(); buffer += decoder.decode(value, { stream: !done });
+            let lineEnd;
+            while ((lineEnd = buffer.indexOf('\n')) >= 0) {
+              const line = buffer.slice(0, lineEnd); buffer = buffer.slice(lineEnd + 1); if (!line.trim()) continue;
+              const event = JSON.parse(line);
+              if (event.type === 'progress') $('#researchState').textContent = event.message;
+              if (event.type === 'error') throw new Error(event.message);
+              if (event.type === 'result') report = event.report;
+            }
+            if (done) break;
+          }
+          if (!report) throw new Error('连接中断，报告未完成，请重试');
           renderResearch(report);
-          showToast(report.status === 'ai_synthesized' ? '联网证据已由 DeepSeek 归并' : '联网证据已标准化；DeepSeek 尚未配置');
+          showToast(report.status === 'ai_synthesized' ? '联网证据已由 DeepSeek 归并' : report.ai_error ? 'AI 归并失败，已保留检索证据，可重试' : '联网证据已标准化；DeepSeek 尚未配置');
           return { status: report.status, candidates: report.candidates?.length || 0, schema_version: report.schema_version };
         } catch (error) {
           $('#researchMode').textContent = '检索失败';
@@ -450,33 +473,42 @@
           const gateway = health.services?.model_gateway;
           $('#aiStatus').textContent = deepseek?.configured ? `DeepSeek · ${deepseek.model}` : '实时数据 · AI 待密钥';
           $('#aiStatus').classList.toggle('off', !deepseek?.configured);
-          $('#deepseekServiceTag').textContent = deepseek?.configured ? '已连接' : '待密钥';
+          $('#deepseekServiceTag').textContent = deepseek?.configured ? '密钥已配置' : '待密钥';
           $('#deepseekServiceTag').classList.toggle('off', !deepseek?.configured);
           $('#deepseekServiceDesc').textContent = deepseek?.configured ? `模型 ${deepseek.model}` : '需要 DEEPSEEK_API_KEY';
-          $('#deepseekModelState').textContent = deepseek?.configured ? '已连接' : '待密钥';
+          $('#deepseekModelState').textContent = deepseek?.configured ? '已配置' : '待密钥';
           $('#deepseekModelState').className = deepseek?.configured ? 'status-ok' : 'status-warn';
-          $('#gatewayChip').textContent = gateway?.configured ? '网关已连接' : '网关未配置';
-          $('#gatewayServiceTag').textContent = gateway?.configured ? '已连接' : '待配置';
-          $('#gatewayServiceTag').classList.toggle('off', !gateway?.configured);
-          $('#gatewayServiceDesc').textContent = gateway?.configured ? 'AlphaFold 3 / DeepTMHMM2 / BindCraft 可提交' : '需要 MODEL_GATEWAY_URL 与令牌';
-          $$('.model-gateway-state').forEach(node => { node.textContent = gateway?.configured ? '可提交' : '待网关'; node.className = gateway?.configured ? 'status-ok model-gateway-state' : 'status-warn model-gateway-state'; });
+          $('#gatewayChip').textContent = gateway?.online ? `本机在线 · ${gateway.device || ''}` : gateway?.configured ? '本机离线' : '网关未配置';
+          $('#gatewayServiceTag').textContent = gateway?.online ? '在线' : gateway?.configured ? '离线' : '待配置';
+          $('#gatewayServiceTag').classList.toggle('off', !gateway?.online);
+          $('#gatewayServiceDesc').textContent = gateway?.online ? `可用模型：${(gateway.models || []).join(' / ')}` : '计算机须保持开机，计算服务和连接通道须运行';
+          $$('.model-gateway-state').forEach((node, i) => { const ready = gateway?.online && gateway.models?.includes(['alphafold3', 'deeptmhmm2', 'bindcraft'][i]); node.textContent = ready ? '可提交' : '未就绪'; node.className = ready ? 'status-ok model-gateway-state' : 'status-warn model-gateway-state'; });
+          $$('#modelSelect option').forEach(option => { option.disabled = !gateway?.online || !gateway.models?.includes(option.value); });
+          $('#modelJobButton').disabled = !gateway?.online;
           return health;
         } catch (error) {
           $('#aiStatus').textContent = '服务状态未知'; $('#aiStatus').classList.add('off');
           return null;
         }
       }
+      let activeModelJob = null;
       async function pollModelJob(jobId, attempt = 0) {
-        if (attempt > 60) return;
+        if (activeModelJob !== jobId) return;
+        if (attempt > 240) { $('#modelJobStatus').textContent = '自动查询已暂停，可点击恢复任务；后台任务未取消。'; return; }
         try {
           const response = await fetch(`/api/models/jobs/${encodeURIComponent(jobId)}`);
           const job = await response.json();
           if (!response.ok) throw new Error(job.detail || job.error || '状态读取失败');
           $('#modelJobStatus').textContent = `任务 ${job.id.slice(0, 10)} · ${job.status}`;
-          if (job.status === 'succeeded') return showToast('真实模型任务已完成，结果已写入项目记录');
+          if (job.status === 'succeeded') {
+            const predictions = job.result?.predictions || [];
+            $('#modelJobResult').innerHTML = predictions.map(p => `<h3>${escapeHTML(p.type)}</h3><p>膜环境：${escapeHTML((p.membrane_types || []).join('、'))}</p><table class="protocol-table"><thead><tr><th>区域</th><th>起点</th><th>终点</th></tr></thead><tbody>${(p.segments || []).map(s => `<tr><td>${escapeHTML(s.name)}</td><td>${escapeHTML(s.start)}</td><td>${escapeHTML(s.end)}</td></tr>`).join('')}</tbody></table>`).join('');
+            const button = document.createElement('button'); button.className = 'ghost'; button.textContent = '下载真实结果 JSON'; button.onclick = () => downloadJSON(job, `BinderOS-${job.id}.json`); $('#modelJobResult').append(button);
+            return showToast('真实模型任务完成，结果已返回');
+          }
           if (job.status === 'failed') return showToast(`模型任务失败：${job.error || '请查看网关日志'}`);
           setTimeout(() => pollModelJob(jobId, attempt + 1), 5000);
-        } catch (error) { $('#modelJobStatus').textContent = error.message; }
+        } catch (error) { $('#modelJobStatus').textContent = `${error.message}；将自动重试，也可稍后恢复任务。`; setTimeout(() => pollModelJob(jobId, attempt + 1), 10000); }
       }
       $$('.nav-item').forEach(button => button.addEventListener('click', () => switchStage(button.dataset.stage)));
       $$('[data-goto]').forEach(button => button.addEventListener('click', () => switchStage(button.dataset.goto)));
@@ -488,13 +520,16 @@
         if (!sequence || /[^ACDEFGHIKLMNPQRSTVWYX]/.test(sequence)) return showToast('请输入有效氨基酸序列');
         button.disabled = true; button.textContent = '提交中…'; $('#modelJobStatus').textContent = '正在联系受保护的模型网关…';
         try {
-          const response = await fetch('/api/models/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, name: `binderos-${Date.now()}`, sequence, seeds: [1, 7, 21] }) });
+          const response = await fetch('/api/models/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, name: `binderos-${Date.now()}`, sequence, seeds: [1, 7, 21], request_id: crypto.randomUUID() }) });
           const job = await response.json();
-          if (!response.ok) throw new Error(job.message || job.error || '提交失败');
+          if (!response.ok) throw new Error(job.message || job.detail || job.error || '提交失败');
+          activeModelJob = job.id; localStorage.setItem('binderos-last-job', job.id); $('#resumeModelJob').hidden = false; $('#modelJobResult').textContent = '';
           $('#modelJobStatus').textContent = `任务 ${job.id.slice(0, 10)} 已提交 · ${job.status}`; showToast('真实模型任务已进入计算队列'); pollModelJob(job.id);
         } catch (error) { $('#modelJobStatus').textContent = `${error.message}；请在“集成与协作”完成配置。`; showToast(error.message); }
         finally { button.disabled = false; button.textContent = '提交模型任务'; }
       });
+      $('#resumeModelJob').hidden = !localStorage.getItem('binderos-last-job');
+      $('#resumeModelJob').onclick = () => { activeModelJob = localStorage.getItem('binderos-last-job'); if (activeModelJob) pollModelJob(activeModelJob); };
       $$('input[name="site"]').forEach(input => input.addEventListener('change', () => { const decision = `TIGIT · 位点 ${input.value}`; $('#siteDecision').textContent = decision; $('#designTaskSubtitle').textContent = decision; showToast(`已选择位点 ${input.value}`); }));
       $$('.target-tab').forEach(tab => tab.addEventListener('click', () => { if (tab.textContent.startsWith('+')) return showToast('可在生产版接入新的目标序列'); $$('.target-tab').forEach(x => x.classList.toggle('active', x === tab)); showToast(`已切换到 ${tab.textContent} 结构视图`); }));
       $$('#countSelector button').forEach(button => button.addEventListener('click', () => { deliverCount = Number(button.dataset.count); $$('#countSelector button').forEach(x => x.classList.toggle('active', x === button)); renderResults(); showToast(`最终交付数量设为 ${deliverCount} 个`); }));

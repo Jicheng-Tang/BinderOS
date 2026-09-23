@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 import secrets
+import shutil
+import re
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +19,35 @@ app = FastAPI(title="BinderOS Model Gateway", version="0.2.0")
 JOBS: dict[str, dict] = {}
 JOB_ROOT = Path(os.getenv("BINDEROS_JOB_ROOT", "/tmp/binderos-jobs")).resolve()
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
+ENABLED_MODELS = set(os.getenv("BINDEROS_ENABLED_MODELS", "deeptmhmm2").split(","))
+RUN_LOCK = asyncio.Semaphore(1)
+for record in JOB_ROOT.glob("*/status.json"):
+    try:
+        job = json.loads(record.read_text())
+        if job["status"] in ("queued", "running"):
+            job.update(status="failed", error="gateway_restarted: 请重新提交任务")
+            record.write_text(json.dumps(job))
+        JOBS[job["id"]] = job
+    except (ValueError, KeyError):
+        continue
+
+
+def save_job(job_id: str) -> None:
+    folder = JOB_ROOT / job_id
+    folder.mkdir(exist_ok=True)
+    temp = folder / "status.tmp"
+    temp.write_text(json.dumps(JOBS[job_id], ensure_ascii=False))
+    temp.replace(folder / "status.json")
+
+
+def available_models() -> list[str]:
+    available = []
+    if "deeptmhmm2" in ENABLED_MODELS and shutil.which(os.getenv("DEEPTMHMM_BIN", "dtm2")):
+        available.append("deeptmhmm2")
+    for model, key in [("alphafold3", "ALPHAFOLD3_SCRIPT"), ("bindcraft", "BINDCRAFT_SCRIPT")]:
+        if model in ENABLED_MODELS and os.getenv(key) and Path(os.environ[key]).is_file():
+            available.append(model)
+    return available
 
 
 class JobRequest(BaseModel):
@@ -26,6 +57,12 @@ class JobRequest(BaseModel):
     sequences: list[dict] | None = None
     seeds: list[int] = Field(default_factory=lambda: [1])
     parameters: dict = Field(default_factory=dict)
+    request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{8,80}$")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_.-]", "_", value)
 
     @field_validator("sequence")
     @classmethod
@@ -55,7 +92,10 @@ def build_command(job_dir: Path, request: JobRequest) -> list[str]:
     if request.model == "deeptmhmm2":
         fasta = job_dir / "input.fasta"
         fasta.write_text(f">{request.name}\n{request.sequence}\n", encoding="utf-8")
-        return [os.getenv("DEEPTMHMM_BIN", "dtm2"), str(fasta), str(job_dir / "results"), "--device", os.getenv("DEEPTMHMM_DEVICE", "cuda"), "--marginals"]
+        command = [os.getenv("DEEPTMHMM_BIN", "dtm2"), str(fasta), str(job_dir / "results"), "--device", os.getenv("DEEPTMHMM_DEVICE", "cpu"), "--marginals", "--batch-size", "1"]
+        if os.getenv("DEEPTMHMM_MODEL_DIR"):
+            command.extend(["--model-dir", os.environ["DEEPTMHMM_MODEL_DIR"]])
+        return command
 
     if request.model == "alphafold3":
         entities = request.sequences or [{"protein": {"id": "A", "sequence": request.sequence}}]
@@ -76,7 +116,15 @@ def build_command(job_dir: Path, request: JobRequest) -> list[str]:
 def collect_result(job_dir: Path, model: str) -> dict:
     if model == "deeptmhmm2":
         path = job_dir / "results" / "predictions.json"
-        return {"predictions": json.loads(path.read_text())} if path.exists() else {}
+        if not path.exists():
+            raise RuntimeError("model_output_missing")
+        predictions = json.loads(path.read_text())
+        if not isinstance(predictions, list) or not predictions:
+            raise RuntimeError("model_output_invalid")
+        for prediction in predictions:
+            prediction["segments"] = [segment if isinstance(segment, dict) else {"name": segment[0], "start": segment[1], "end": segment[2]} for segment in prediction.get("segments", [])]
+            prediction["coordinate_system"] = "1-based inclusive"
+        return {"predictions": predictions, "provenance": {"model": "DeepTMHMM2", "version": "0.1.0", "source_revision": os.getenv("DEEPTMHMM_REVISION", "unknown"), "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "parameters": {"marginals": True, "batch_size": 1}}}
     if model == "alphafold3":
         summaries = list((job_dir / "results").rglob("*_summary_confidences.json"))
         return {"summary_confidences": [json.loads(path.read_text()) for path in summaries[:10]]}
@@ -85,33 +133,55 @@ def collect_result(job_dir: Path, model: str) -> dict:
 
 
 async def run_job(job_id: str, request: JobRequest) -> None:
+    async with RUN_LOCK:
+        await execute_job(job_id, request)
+
+
+async def execute_job(job_id: str, request: JobRequest) -> None:
     job_dir = JOB_ROOT / job_id
-    job_dir.mkdir(parents=True, exist_ok=False)
     JOBS[job_id].update(status="running", started_at=now())
+    save_job(job_id)
     try:
         command = build_command(job_dir, request)
-        process = await asyncio.create_subprocess_exec(*command, cwd=job_dir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        output, _ = await process.communicate()
-        log = output.decode("utf-8", errors="replace")[-20_000:]
-        (job_dir / "job.log").write_text(log, encoding="utf-8")
+        with (job_dir / "job.log").open("w") as log:
+            process = await asyncio.create_subprocess_exec(*command, cwd=job_dir, stdout=log, stderr=asyncio.subprocess.STDOUT)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=int(os.getenv("BINDEROS_JOB_TIMEOUT", "1200")))
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                raise RuntimeError("model_timeout: 计算超时，请缩短序列或检查本机日志")
         if process.returncode != 0:
             raise RuntimeError(f"model exited with code {process.returncode}")
         JOBS[job_id].update(status="succeeded", finished_at=now(), result=collect_result(job_dir, request.model))
     except Exception as error:
         JOBS[job_id].update(status="failed", finished_at=now(), error=str(error))
+    finally:
+        save_job(job_id)
 
 
 @app.get("/health")
 async def health(_: None = Depends(authorize)) -> dict:
-    return {"status": "ok", "models": ["alphafold3", "deeptmhmm2", "bindcraft"]}
+    return {"status": "ok", "models": available_models(), "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "active_jobs": sum(j["status"] in ("queued", "running") for j in JOBS.values())}
 
 
 @app.post("/v1/jobs", status_code=202)
 async def create_job(request: JobRequest, background_tasks: BackgroundTasks, _: None = Depends(authorize)) -> dict:
     if not request.sequence and not request.sequences:
         raise HTTPException(status_code=422, detail="sequence or sequences is required")
+    if request.model not in available_models():
+        raise HTTPException(status_code=503, detail="model_not_installed")
+    if request.model == "deeptmhmm2" and (not request.sequence or len(request.sequence) > 1000 or request.sequences):
+        raise HTTPException(status_code=422, detail="本机试运行仅接受单条 1–1000 aa 序列")
+    if request.request_id:
+        for job in JOBS.values():
+            if job.get("request_id") == request.request_id:
+                return job
+    if sum(j["status"] in ("queued", "running") for j in JOBS.values()) >= 4:
+        raise HTTPException(status_code=429, detail="本机队列已满，请稍后提交")
     job_id = uuid.uuid4().hex
-    JOBS[job_id] = {"id": job_id, "model": request.model, "name": request.name, "status": "queued", "created_at": now()}
+    JOBS[job_id] = {"id": job_id, "request_id": request.request_id, "model": request.model, "name": request.name, "sequence_length": len(request.sequence or ""), "status": "queued", "created_at": now()}
+    save_job(job_id)
     background_tasks.add_task(run_job, job_id, request)
     return JOBS[job_id]
 
