@@ -118,13 +118,17 @@ def collect_result(job_dir: Path, model: str) -> dict:
         path = job_dir / "results" / "predictions.json"
         if not path.exists():
             raise RuntimeError("model_output_missing")
-        predictions = json.loads(path.read_text())
-        if not isinstance(predictions, list) or not predictions:
+        records = json.loads(path.read_text())
+        if not isinstance(records, list) or not records:
             raise RuntimeError("model_output_invalid")
+        predictions = [record for record in records if isinstance(record, dict) and "id" in record and "type" in record]
+        metadata = next((record["metadata"] for record in records if isinstance(record, dict) and "metadata" in record), {})
+        if not predictions:
+            raise RuntimeError("model_predictions_missing")
         for prediction in predictions:
             prediction["segments"] = [segment if isinstance(segment, dict) else {"name": segment[0], "start": segment[1], "end": segment[2]} for segment in prediction.get("segments", [])]
             prediction["coordinate_system"] = "1-based inclusive"
-        return {"predictions": predictions, "provenance": {"model": "DeepTMHMM2", "version": "0.1.0", "source_revision": os.getenv("DEEPTMHMM_REVISION", "unknown"), "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "parameters": {"marginals": True, "batch_size": 1}}}
+        return {"predictions": predictions, "metadata": metadata, "provenance": {"model": "DeepTMHMM2", "version": "0.1.0", "source_revision": os.getenv("DEEPTMHMM_REVISION", "unknown"), "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "parameters": {"marginals": True, "batch_size": 1}}}
     if model == "alphafold3":
         summaries = list((job_dir / "results").rglob("*_summary_confidences.json"))
         return {"summary_confidences": [json.loads(path.read_text()) for path in summaries[:10]]}
