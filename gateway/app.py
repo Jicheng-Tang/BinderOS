@@ -14,8 +14,12 @@ from typing import Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
+try:
+    from .model_adapters import installed_models, validate_new_model, build_new_command, collect_new_result
+except ImportError:
+    from model_adapters import installed_models, validate_new_model, build_new_command, collect_new_result
 
-app = FastAPI(title="BinderOS Model Gateway", version="0.2.0")
+app = FastAPI(title="BinderOS Model Gateway", version="0.3.0")
 JOBS: dict[str, dict] = {}
 JOB_ROOT = Path(os.getenv("BINDEROS_JOB_ROOT", "/tmp/binderos-jobs")).resolve()
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
@@ -42,6 +46,7 @@ def save_job(job_id: str) -> None:
 
 def available_models() -> list[str]:
     available = []
+    available.extend(model for model in installed_models() if model in ENABLED_MODELS)
     if "deeptmhmm2" in ENABLED_MODELS and shutil.which(os.getenv("DEEPTMHMM_BIN", "dtm2")):
         available.append("deeptmhmm2")
     for model, key in [("alphafold3", "ALPHAFOLD3_SCRIPT"), ("bindcraft", "BINDCRAFT_SCRIPT")]:
@@ -51,9 +56,11 @@ def available_models() -> list[str]:
 
 
 class JobRequest(BaseModel):
-    model: Literal["alphafold3", "deeptmhmm2", "bindcraft"]
+    model: Literal["alphafold3", "deeptmhmm2", "bindcraft", "proteinmpnn", "boltz2"]
     name: str = Field(default="binderos-job", min_length=1, max_length=80)
     sequence: str | None = None
+    partner_sequence: str | None = None
+    pdb_text: str | None = Field(default=None, max_length=500_000)
     sequences: list[dict] | None = None
     seeds: list[int] = Field(default_factory=lambda: [1])
     parameters: dict = Field(default_factory=dict)
@@ -64,7 +71,7 @@ class JobRequest(BaseModel):
     def validate_name(cls, value: str) -> str:
         return re.sub(r"[^A-Za-z0-9_.-]", "_", value)
 
-    @field_validator("sequence")
+    @field_validator("sequence", "partner_sequence")
     @classmethod
     def validate_sequence(cls, value: str | None) -> str | None:
         if value is None:
@@ -89,6 +96,8 @@ def now() -> str:
 
 
 def build_command(job_dir: Path, request: JobRequest) -> list[str]:
+    if request.model in ("proteinmpnn", "boltz2"):
+        return build_new_command(job_dir, request)
     if request.model == "deeptmhmm2":
         fasta = job_dir / "input.fasta"
         fasta.write_text(f">{request.name}\n{request.sequence}\n", encoding="utf-8")
@@ -114,6 +123,8 @@ def build_command(job_dir: Path, request: JobRequest) -> list[str]:
 
 
 def collect_result(job_dir: Path, model: str) -> dict:
+    if model in ("proteinmpnn", "boltz2"):
+        return collect_new_result(job_dir, model)
     if model == "deeptmhmm2":
         path = job_dir / "results" / "predictions.json"
         if not path.exists():
@@ -166,15 +177,20 @@ async def execute_job(job_id: str, request: JobRequest) -> None:
 
 @app.get("/health")
 async def health(_: None = Depends(authorize)) -> dict:
-    return {"status": "ok", "models": available_models(), "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "active_jobs": sum(j["status"] in ("queued", "running") for j in JOBS.values())}
+    return {"status": "ok", "version": app.version, "models": available_models(), "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "active_jobs": sum(j["status"] in ("queued", "running") for j in JOBS.values())}
 
 
 @app.post("/v1/jobs", status_code=202)
 async def create_job(request: JobRequest, background_tasks: BackgroundTasks, _: None = Depends(authorize)) -> dict:
-    if not request.sequence and not request.sequences:
+    if not request.sequence and not request.sequences and not request.pdb_text:
         raise HTTPException(status_code=422, detail="sequence or sequences is required")
     if request.model not in available_models():
         raise HTTPException(status_code=503, detail="model_not_installed")
+    if request.model in ("proteinmpnn", "boltz2"):
+        try:
+            validate_new_model(request)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from None
     if request.model == "deeptmhmm2" and (not request.sequence or len(request.sequence) > 1000 or request.sequences):
         raise HTTPException(status_code=422, detail="本机试运行仅接受单条 1–1000 aa 序列")
     if request.request_id:

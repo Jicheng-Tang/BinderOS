@@ -6,7 +6,7 @@ BinderOS is an evidence-first workflow for target discovery, structure/topology 
 
 - The Sites Worker serves the web app and same-origin API.
 - `/api/research` retrieves current evidence from Europe PMC and reviewed UniProt records. If `DEEPSEEK_API_KEY` is configured, DeepSeek converts that evidence into `binderos.target-report.v1`; without the key, the API returns an evidence-only report and makes no AI recommendation.
-- `/api/models/jobs` forwards AlphaFold 3, DeepTMHMM2, and BindCraft jobs to the separate authenticated model gateway in `gateway/`.
+- `/api/models/jobs` forwards validated jobs to the separate authenticated model gateway in `gateway/`. The local deployment supports DeepTMHMM2, ProteinMPNN and a bounded Boltz-2 adapter; AlphaFold 3 and BindCraft remain unavailable.
 - The model gateway runs on a Linux compute host. AlphaFold 3 should use its official container, model parameters, databases, and supported GPU configuration. The hosted website does not run GPU inference itself.
 
 ## Production environment
@@ -38,7 +38,24 @@ The model gateway uses the variables in `gateway/.env.example`.
 
 Research supports an NDJSON response with progress and heartbeat events. Literature requests have a 15-second limit; DeepSeek has its own 90-second limit. The model returns only concise analysis, with original evidence and provenance attached by the server. Candidate identities and URLs are checked against retrieved records. There are no invented numerical evidence scores. Failed AI requests preserve retrieved evidence and explicitly report the failure. A report can correctly contain zero recommendations.
 
-The local pilot only enables DeepTMHMM2, one job at a time, a maximum of four pending/running jobs and sequences up to 1000 residues. Jobs and results are saved outside the repository and can be reopened using the last job ID. Interrupted jobs are marked failed on restart. Segments use **1-based inclusive** positions. AlphaFold 3 and BindCraft are not installed by this pilot and are shown as unavailable.
+The local pilot runs one model job at a time across all models, with a maximum of four pending/running jobs. DeepTMHMM2 accepts sequences up to 1000 residues. Jobs and results are saved outside the repository and can be reopened using the last job ID. Interrupted jobs are marked failed on restart. Topology segments use **1-based inclusive** positions. AlphaFold 3 and BindCraft are not installed by this pilot and are shown as unavailable.
+
+## Additional local models
+
+| Model | Input and current bounds | Output and limitations |
+| --- | --- | --- |
+| ProteinMPNN | PDB with complete backbone, standard residues, named chains and continuous numbering; 10–500 residues; explicit design chains; 1–16 sequences; temperature 0.1–0.3 | FASTA and negative-log-probability scores. Non-design chains are fixed; all residues in design chains may change. Requires an existing backbone; not a binder-generation pipeline or affinity predictor. |
+| Boltz-2 | One or two protein sequences, 10–200 residues total; seed 1 by default | PDB and raw confidence JSON. Single-sequence/no-MSA pilot, 3 recycles, 200 sampling steps, one sample, no custom kernels. FP32 compatibility wrapper for RTX 2080 Ti; not the upstream default precision. Length caps are pilot limits, not guaranteed memory bounds. |
+
+ProteinMPNN is pinned to upstream `8907e6671bfbfc92303b5f79c4b5e6ce47cdef57` with vanilla `v_48_020` weights (MIT). Clone the official repository into `work/proteinmpnn`; it uses the dedicated `model-runtime` environment without extra dependencies. Runtime logs record whether CUDA actually ran.
+
+Boltz uses the existing **2.1.1** environment at `/home/hy/miniconda3/envs/boltz/bin/python`; it is not upgraded or edited. Configure `BOLTZ_PYTHON` for another installation. `work/model-cache/boltz` references the existing `boltz2_conf.ckpt`, `boltz2_aff.ckpt` and `mols` resources under `/home/hy/.boltz`, avoiding duplicate downloads. Boltz code and weights are MIT licensed. A per-process wrapper overrides Trainer precision to `32-true` and disables custom kernels; it fails explicitly without a GPU. Other computers must configure their own environment and weight locations.
+
+No sequence is sent to a remote MSA service. Boltz authors warn that single-sequence mode may reduce accuracy; this pilot is for deployment verification and preliminary exploration, not final candidate selection. pLDDT/pTM/ipTM are confidence metrics, not protein-binder affinities. Single-chain ipTM is not meaningful. Raw PDB/FASTA and JSON are downloadable from the website; source/weights, parameters and actual device are recorded.
+
+Use “载入公开泛素联调样例” for the public [RCSB 1UBQ](https://www.rcsb.org/structure/1UBQ) smoke-test structure and its 76-aa sequence. These are deployment tests, not validated new binders. After changing gateway code, restart the host-terminal service so new adapters load. Existing jobs are kept outside Git.
+
+Sources: [ProteinMPNN](https://github.com/dauparas/ProteinMPNN), [Boltz installation/license](https://github.com/jwohlwend/boltz), [Boltz input/output documentation](https://github.com/jwohlwend/boltz/blob/main/docs/prediction.md). For BindCraft, the authors recommend at least 32 GB GPU memory; separate GPUs do not combine for one job, and PyRosetta licensing must be checked before use. See [BindCraft hardware guidance](https://github.com/martinpacesa/BindCraft/wiki/De-novo-binder-design-with-BindCraft). AlphaFold 3 requires its separately obtained model parameters and supported hardware; no AF3 weight authorization is assumed.
 
 Directory layout beside this checkout:
 

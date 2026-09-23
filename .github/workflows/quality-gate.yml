@@ -16,6 +16,11 @@ jobs:
         with:
           node-version: 22
       - run: npm run check
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r gateway/requirements.txt httpx==0.28.1
+      - run: python -m unittest gateway/test_gateway.py
       - name: Reject committed credentials
         run: |
           if git grep -nE '(sk-[A-Za-z0-9]{16,}|DEEPSEEK_API_KEY=.+|MODEL_GATEWAY_TOKEN=.+)' -- ':!*.example'; then

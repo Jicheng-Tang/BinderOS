@@ -195,8 +195,8 @@ function gatewayHeaders(env) {
 async function handleModelJob(request, env) {
   if (!env.MODEL_GATEWAY_URL) return json({ error: "model_gateway_unconfigured", message: "请配置 MODEL_GATEWAY_URL 后提交真实模型任务。" }, 503);
   const body = await readJson(request);
-  if (!new Set(["alphafold3", "deeptmhmm2", "bindcraft"]).has(body.model)) return json({ error: "unsupported_model" }, 400);
-  if (!body.sequence && !body.sequences?.length) return json({ error: "sequence_required" }, 400);
+  if (!new Set(["alphafold3", "deeptmhmm2", "bindcraft", "proteinmpnn", "boltz2"]).has(body.model)) return json({ error: "unsupported_model" }, 400);
+  if (!body.sequence && !body.sequences?.length && !body.pdb_text) return json({ error: "sequence_or_pdb_required" }, 400);
   const response = await fetch(`${env.MODEL_GATEWAY_URL.replace(/\/$/, "")}/v1/jobs`, { method: "POST", headers: gatewayHeaders(env), body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
   const data = await response.json().catch(() => ({ error: "invalid_gateway_response" }));
   return json(data, response.status);
@@ -232,6 +232,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (request.method === "GET" && url.pathname === "/api/health") return handleHealth(env);
+      if (request.method === "GET" && url.pathname === "/api/models/example") return json({ name: "Ubiquitin · 1UBQ · 公开联调样例", source_url: "https://www.rcsb.org/structure/1UBQ", sequence: "MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG", pdb_text: examplePdb });
       if (request.method === "POST" && url.pathname === "/api/research") return request.headers.get("accept")?.includes("application/x-ndjson") ? streamResearch(request, env, ctx) : await handleResearch(request, env);
       if (request.method === "POST" && url.pathname === "/api/models/jobs") return await handleModelJob(request, env);
       if (request.method === "GET" && url.pathname.startsWith("/api/models/jobs/")) return await handleModelStatus(url.pathname, env);

@@ -3,11 +3,39 @@ import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
 
 class GatewayTest(unittest.TestCase):
+    def test_bounded_model_adapters(self):
+        module = importlib.import_module("gateway.model_adapters" if __package__ else "model_adapters")
+        request = SimpleNamespace(model="boltz2", parameters={}, sequence="A" * 76, partner_sequence=None, sequences=None, pdb_text=None)
+        settings = module.validate_new_model(request)
+        self.assertEqual(settings["msa_mode"], "single_sequence")
+        self.assertEqual(settings["precision"], "32-true")
+        request.sequence = "A" * 201
+        with self.assertRaises(ValueError):
+            module.validate_new_model(request)
+        request.sequence = "A" * 76
+        request.parameters = {"use_msa_server": True}
+        with self.assertRaises(ValueError):
+            module.validate_new_model(request)
+        request.model = "proteinmpnn"
+        request.sequence = None
+        request.pdb_text = (Path(__file__).resolve().parents[1] / "public/examples/1UBQ.pdb").read_text()
+        request.parameters = {"design_chains": ["A"], "num_sequences": 2}
+        settings = module.validate_new_model(request)
+        self.assertEqual(settings["residue_count"], 76)
+        self.assertEqual(settings["fixed_chains"], [])
+        request.parameters["design_chains"] = ["B"]
+        with self.assertRaises(ValueError):
+            module.validate_new_model(request)
+        request.parameters = {"design_chains": ["A"], "num_sequences": 10000}
+        with self.assertRaises(ValueError):
+            module.validate_new_model(request)
+
     def test_auth_validation_and_output(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.dict(os.environ, {"BINDEROS_JOB_ROOT": directory, "BINDEROS_GATEWAY_TOKEN": "local-test-only"}):

@@ -32,6 +32,22 @@ test('missing gateway is explicit', async () => {
   const r = await worker.fetch(new Request('http://test/api/models/jobs', { method: 'POST' }), {});
   assert.equal(r.status, 503);
 });
+test('ProteinMPNN PDB requests reach the authenticated gateway', async t => {
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(url, 'https://gateway.example/v1/jobs');
+    assert.equal(init.headers.authorization, 'Bearer test-token');
+    assert.equal(JSON.parse(init.body).pdb_text, 'fixture');
+    return Response.json({ id: 'job-fixture', status: 'queued' }, { status: 202 });
+  });
+  const r = await worker.fetch(new Request('http://test/api/models/jobs', { method: 'POST', body: JSON.stringify({ model: 'proteinmpnn', pdb_text: 'fixture', parameters: { design_chains: ['A'] } }) }), { MODEL_GATEWAY_URL: 'https://gateway.example', MODEL_GATEWAY_TOKEN: 'test-token' });
+  assert.equal(r.status, 202);
+});
+test('public benchmark includes actual structure and sequence', async () => {
+  const r = await worker.fetch(new Request('http://test/api/models/example'), {});
+  const sample = await r.json();
+  assert.equal(sample.sequence.length, 76);
+  assert.ok(sample.pdb_text.includes('ATOM'));
+});
 test('evidence retry and partial-source warning', async t => {
   let attempts = 0;
   t.mock.method(globalThis, 'fetch', async url => {

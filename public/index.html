@@ -266,16 +266,28 @@
             <aside class="card">
               <div class="card-head"><div><div class="card-title">真实模型编排</div><div class="card-sub">任务会提交到独立 GPU 计算网关</div></div><span class="source-chip" id="gatewayChip">检测中</span></div>
               <div class="model-list">
-                <div class="model-row"><span class="model-icon">AF</span><span><span class="model-name">AlphaFold 3</span><span class="model-desc">官方 JSON 输入 · confidence JSON 输出</span></span><span class="status-warn model-gateway-state">待网关</span></div>
-                <div class="model-row"><span class="model-icon">TM</span><span><span class="model-name">DeepTMHMM2</span><span class="model-desc">predictions.json · GFF3 · 边际概率</span></span><span class="status-warn model-gateway-state">待网关</span></div>
-                <div class="model-row"><span class="model-icon">BC</span><span><span class="model-name">BindCraft</span><span class="model-desc">AF2 hallucination + ProteinMPNN + PyRosetta</span></span><span class="status-warn model-gateway-state">待网关</span></div>
+                <div class="model-row"><span class="model-icon">TM</span><span><span class="model-name">DeepTMHMM2</span><span class="model-desc">跨膜拓扑 · 信号肽 · 区域坐标</span></span><span class="status-warn model-gateway-state" data-model="deeptmhmm2">待网关</span></div>
+                <div class="model-row"><span class="model-icon">B2</span><span><span class="model-name">Boltz-2</span><span class="model-desc">短蛋白结构 · 无 MSA 联调 · FP32</span></span><span class="status-warn model-gateway-state" data-model="boltz2">待网关</span></div>
+                <div class="model-row"><span class="model-icon">MP</span><span><span class="model-name">ProteinMPNN</span><span class="model-desc">给定 PDB 骨架 → 设计链序列</span></span><span class="status-warn model-gateway-state" data-model="proteinmpnn">待网关</span></div>
+                <div class="model-row"><span class="model-icon">AF</span><span><span class="model-name">AlphaFold 3</span><span class="model-desc">尚未部署 · 权重许可与硬件待确认</span></span><span class="status-warn model-gateway-state" data-model="alphafold3">未就绪</span></div>
+                <div class="model-row"><span class="model-icon">BC</span><span><span class="model-name">BindCraft</span><span class="model-desc">尚未部署 · 显存与 PyRosetta 许可待确认</span></span><span class="status-warn model-gateway-state" data-model="bindcraft">未就绪</span></div>
                 <div class="model-row"><span class="model-icon">SP</span><span><span class="model-name">SignalP / NetSurfP</span><span class="model-desc">下一批模型适配器</span></span><span class="status-warn">规划中</span></div>
                 <div class="model-row"><span class="model-icon">AI</span><span><span class="model-name">DeepSeek 决策代理</span><span class="model-desc">只读证据归并与标准 JSON</span></span><span class="status-warn" id="deepseekModelState">待密钥</span></div>
               </div>
               <div class="integration-form">
-                <label for="modelSequence">提交真实序列进行结构或拓扑预测</label>
-                <textarea class="sequence-input" id="modelSequence" placeholder="粘贴氨基酸序列（仅 A–Z，不含 FASTA 标题）"></textarea>
-                <div class="integration-actions"><select class="select" id="modelSelect" aria-label="模型"><option value="deeptmhmm2">DeepTMHMM2</option><option value="alphafold3">AlphaFold 3</option></select><button class="primary" id="modelJobButton">提交模型任务</button></div>
+                <label for="modelSelect">选择真实计算模型</label>
+                <select class="select" id="modelSelect" aria-label="模型"><option value="deeptmhmm2">DeepTMHMM2</option><option value="boltz2">Boltz-2 · 短蛋白结构预测</option><option value="proteinmpnn">ProteinMPNN · 骨架序列设计</option><option value="alphafold3">AlphaFold 3 · 尚未部署</option></select>
+                <p id="modelHelp" class="job-status">单条氨基酸序列，最多 1000 aa；返回跨膜拓扑和信号肽预测。</p>
+                <div id="sequenceFields"><label for="modelSequence">蛋白序列 / 链 A</label><textarea class="sequence-input" id="modelSequence" placeholder="粘贴氨基酸序列，不含 FASTA 标题"></textarea></div>
+                <div id="boltzFields" hidden><label for="partnerSequence">可选：链 B 序列</label><textarea class="sequence-input" id="partnerSequence" placeholder="单链预测请留空；两条链合计最多 200 aa"></textarea><p class="job-status">固定预设：3 recycles、200 steps、1 sample、FP32。无 MSA，准确性可能降低；序列不发送至外部 MSA 服务。不是蛋白结合亲和力预测。</p></div>
+                <div id="mpnnFields" hidden>
+                  <label for="pdbFile">上传 PDB 骨架（最多 500 KB）</label><input id="pdbFile" type="file" accept=".pdb" />
+                  <label for="pdbText">或粘贴 PDB 内容</label><textarea class="sequence-input" id="pdbText" maxlength="500000" placeholder="需要完整 N、CA、C、O；单模型、标准氨基酸、连续残基编号"></textarea>
+                  <label for="designChains">允许重新设计的链（如 B；其余链固定）</label><input class="input" id="designChains" value="A" placeholder="如 A 或 A,B" />
+                  <div class="integration-actions"><label>序列数 <select class="select" id="mpnnCount"><option>2</option><option selected>4</option><option>8</option><option>16</option></select></label><label>温度 <select class="select" id="mpnnTemperature"><option>0.1</option><option>0.15</option><option>0.2</option><option>0.25</option><option>0.3</option></select></label></div>
+                  <p class="job-status">只设计已给定骨架，不能独立生成 binder；选中链内所有位置均可改变。总长度 10–500 aa。</p>
+                </div>
+                <div class="integration-actions"><button class="ghost" id="loadModelExample">载入公开泛素联调样例</button><button class="primary" id="modelJobButton">提交模型任务</button></div>
                 <p class="job-status" id="modelJobStatus" role="status">未提交任务。需要先配置受保护的模型网关。</p>
                 <button class="ghost" id="resumeModelJob" hidden>恢复上次任务</button>
                 <div id="modelJobResult" style="overflow-wrap:anywhere"></div>
@@ -482,7 +494,7 @@
           $('#gatewayServiceTag').textContent = gateway?.online ? '在线' : gateway?.configured ? '离线' : '待配置';
           $('#gatewayServiceTag').classList.toggle('off', !gateway?.online);
           $('#gatewayServiceDesc').textContent = gateway?.online ? `可用模型：${(gateway.models || []).join(' / ')}` : '计算机须保持开机，计算服务和连接通道须运行';
-          $$('.model-gateway-state').forEach((node, i) => { const ready = gateway?.online && gateway.models?.includes(['alphafold3', 'deeptmhmm2', 'bindcraft'][i]); node.textContent = ready ? '可提交' : '未就绪'; node.className = ready ? 'status-ok model-gateway-state' : 'status-warn model-gateway-state'; });
+          $$('.model-gateway-state').forEach(node => { const ready = gateway?.online && gateway.models?.includes(node.dataset.model); node.textContent = ready ? '可提交' : '未就绪'; node.className = ready ? 'status-ok model-gateway-state' : 'status-warn model-gateway-state'; });
           $$('#modelSelect option').forEach(option => { option.disabled = !gateway?.online || !gateway.models?.includes(option.value); });
           $('#modelJobButton').disabled = !gateway?.online;
           return health;
@@ -503,6 +515,20 @@
           if (job.status === 'succeeded') {
             const predictions = job.result?.predictions || [];
             $('#modelJobResult').innerHTML = predictions.map(p => `<h3>${escapeHTML(p.type)}</h3><p>膜环境：${escapeHTML((p.membrane_types || []).join('、'))}</p><table class="protocol-table"><thead><tr><th>区域</th><th>起点</th><th>终点</th></tr></thead><tbody>${(p.segments || []).map(s => `<tr><td>${escapeHTML(s.name)}</td><td>${escapeHTML(s.start)}</td><td>${escapeHTML(s.end)}</td></tr>`).join('')}</tbody></table>`).join('');
+            const result = job.result || {}; const panel = $('#modelJobResult');
+            const addText = (tag, text) => { const el = document.createElement(tag); el.textContent = text; panel.append(el); };
+            const addDownload = (name, contents) => { const el = document.createElement('button'); el.className = 'ghost'; el.textContent = `下载 ${name}`; el.onclick = () => { const url = URL.createObjectURL(new Blob([contents], {type:'text/plain'})); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }; panel.append(el); };
+            addText('p', `运行设备：${result.provenance?.device || '未报告'} · ${result.provenance?.gpu || result.provenance?.model || job.model}`);
+            (result.warnings || []).forEach(text => addText('p', text));
+            (result.structures || []).forEach(structure => {
+              const c = structure.confidence; const format = value => typeof value === 'number' ? value.toFixed(3) : '不适用';
+              addText('h3', 'Boltz-2 结构预测');
+              const complex = (result.provenance?.parameters?.chains || []).length > 1;
+              addText('p', `pLDDT（0–1）：${format(c.complex_plddt)} · pTM：${format(c.ptm)} · ipTM：${complex ? format(c.iptm) : '单链不适用'}`);
+              addDownload(structure.filename, structure.pdb);
+            });
+            (result.designs || []).forEach((design, i) => { addText('h3', `序列 ${i + 1} · MPNN score ${Number(design.score).toFixed(3)}`); addText('p', design.sequence); });
+            if (result.fasta) addDownload('ProteinMPNN-designs.fasta', result.fasta);
             const button = document.createElement('button'); button.className = 'ghost'; button.textContent = '下载真实结果 JSON'; button.onclick = () => downloadJSON(job, `BinderOS-${job.id}.json`); $('#modelJobResult').append(button);
             return showToast('真实模型任务完成，结果已返回');
           }
@@ -515,12 +541,28 @@
       $$('.check').forEach(input => input.addEventListener('change', () => { const count = $$('.check:checked').length; $('#targetCount').textContent = `${count} / 6`; showToast(`已选择 ${count} 个靶点`); }));
       $('#searchButton').addEventListener('click', () => runResearch().catch(() => {}));
       $('#refreshServices').addEventListener('click', async () => { await checkServices(); showToast('服务状态已刷新'); });
+      function updateModelFields() {
+        const model = $('#modelSelect').value;
+        $('#sequenceFields').hidden = model === 'proteinmpnn'; $('#mpnnFields').hidden = model !== 'proteinmpnn'; $('#boltzFields').hidden = model !== 'boltz2';
+        $('#modelHelp').textContent = model === 'proteinmpnn' ? '上传骨架并明确选择设计链；其余链保持固定。输出不是经实验验证的 binder。' : model === 'boltz2' ? '本机短蛋白试运行：一至两条链，总长度 10–200 aa。' : '单条氨基酸序列，最多 1000 aa；返回跨膜拓扑和信号肽预测。';
+      }
+      $('#modelSelect').onchange = updateModelFields;
+      $('#pdbFile').onchange = async event => { const file = event.target.files[0]; if (!file) return; if (file.size > 500000) return showToast('PDB 文件不能超过 500 KB'); $('#pdbText').value = await file.text(); };
+      $('#loadModelExample').onclick = async () => { try { const r = await fetch('/api/models/example'); if (!r.ok) throw new Error(); const sample = await r.json(); $('#modelSequence').value = sample.sequence; $('#partnerSequence').value = ''; $('#pdbText').value = sample.pdb_text; $('#designChains').value = 'A'; showToast(sample.name); } catch { showToast('样例加载失败，请稍后重试'); } };
       $('#modelJobButton').addEventListener('click', async () => {
         const button = $('#modelJobButton'); const sequence = $('#modelSequence').value.replace(/\s/g, '').toUpperCase(); const model = $('#modelSelect').value;
-        if (!sequence || /[^ACDEFGHIKLMNPQRSTVWYX]/.test(sequence)) return showToast('请输入有效氨基酸序列');
+        const payload = { model, name: `binderos-${Date.now()}`, request_id: crypto.randomUUID() };
+        if (model === 'proteinmpnn') {
+          payload.pdb_text = $('#pdbText').value; payload.parameters = { design_chains: $('#designChains').value.split(/[\s,]+/).filter(Boolean), num_sequences: Number($('#mpnnCount').value), temperature: Number($('#mpnnTemperature').value), seed: 1 };
+          if (!payload.pdb_text.trim() || payload.pdb_text.length > 500000 || !payload.parameters.design_chains.length) return showToast('请提供 PDB 内容并选择设计链');
+        } else {
+          if (!sequence || /[^ACDEFGHIKLMNPQRSTVWYX]/.test(sequence)) return showToast('请输入有效氨基酸序列');
+          payload.sequence = sequence;
+          if (model === 'boltz2') { const partner = $('#partnerSequence').value.replace(/\s/g, '').toUpperCase(); if (partner) payload.partner_sequence = partner; payload.parameters = { seed: 1 }; }
+        }
         button.disabled = true; button.textContent = '提交中…'; $('#modelJobStatus').textContent = '正在联系受保护的模型网关…';
         try {
-          const response = await fetch('/api/models/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, name: `binderos-${Date.now()}`, sequence, seeds: [1, 7, 21], request_id: crypto.randomUUID() }) });
+          const response = await fetch('/api/models/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
           const job = await response.json();
           if (!response.ok) throw new Error(job.message || job.detail || job.error || '提交失败');
           activeModelJob = job.id; localStorage.setItem('binderos-last-job', job.id); $('#resumeModelJob').hidden = false; $('#modelJobResult').textContent = '';
