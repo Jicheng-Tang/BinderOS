@@ -600,7 +600,10 @@
         const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
         const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
       }
-      let benchmarkId = localStorage.getItem('binderos-benchmark-id');
+      const linkedBenchmark = new URLSearchParams(location.search).get('benchmark');
+      const validLinkedBenchmark = /^[a-f0-9]{32}$/.test(linkedBenchmark || '') ? linkedBenchmark : null;
+      let benchmarkId = validLinkedBenchmark || localStorage.getItem('binderos-benchmark-id');
+      if (validLinkedBenchmark) localStorage.setItem('binderos-benchmark-id', validLinkedBenchmark);
       $('#resumeBenchmark').hidden = !benchmarkId;
       const formatMetric = v => typeof v === 'number' && Number.isFinite(v) ? v.toFixed(3) : '—';
       async function benchmarkRequest(path, init) {
@@ -659,6 +662,8 @@
       };
       $('#resumeBenchmark').onclick=()=>{if(benchmarkId)pollBenchmark(benchmarkId);};
       $('#cancelBenchmark').onclick=async()=>{try{renderBenchmark(await benchmarkRequest(`/api/benchmarks/${benchmarkId}/cancel`,{method:'POST'}));}catch(e){showToast(e.message);}};
+      // A private result link restores an existing run; it never starts GPU work.
+      if (validLinkedBenchmark) { switchStage(3); pollBenchmark(validLinkedBenchmark); }
       function registerAgentTools() {
         const context = document.modelContext;
         if (!context?.registerTool) return;
