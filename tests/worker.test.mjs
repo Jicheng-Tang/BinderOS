@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { Script } from 'node:vm';
 import worker from '../dist/server/index.js';
 
 const protein = { primaryAccession: 'PTEST', genes: [{ geneName: { value: 'TEST' } }], proteinDescription: { recommendedName: { fullName: { value: 'Test protein' } } } };
@@ -88,6 +89,40 @@ test('health does not advertise uninstalled models', async t => {
 });
 
 const atlasSeq='MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG';
+test('structure report proxy validates, authenticates and refuses redirects',async t=>{
+  const env={MODEL_GATEWAY_URL:'https://gateway.example',MODEL_GATEWAY_TOKEN:'test-token'};
+  const payload={sequence:atlasSeq,request_id:'structure-test-1',lookup_atlas:false};
+  const request=body=>new Request('http://test/api/structures/reports',{method:'POST',body:JSON.stringify(body)});
+  let count=0;
+  t.mock.method(globalThis,'fetch',async(url,init)=>{
+    count++;assert.equal(url,'https://gateway.example/v1/structures');
+    assert.equal(init.headers.authorization,'Bearer test-token');assert.equal(init.redirect,'manual');
+    assert.deepEqual(JSON.parse(init.body),payload);
+    return Response.json({id:'a'.repeat(32),status:'queued'},{status:202});
+  });
+  assert.equal((await worker.fetch(request(payload),env)).status,202);
+  for(const body of [{...payload,sequence:'A'.repeat(201)},{...payload,sequence:'AXXXXXXXAA'},{...payload,request_id:'../bad'},{...payload,model:'arbitrary'},{...payload,lookup_atlas:'false'}])assert.equal((await worker.fetch(request(body),env)).status,400);
+  assert.equal(count,1);
+  t.mock.method(globalThis,'fetch',async()=>new Response(null,{status:302,headers:{location:'https://untrusted.example'}}));
+  assert.equal((await worker.fetch(request(payload),env)).status,502);
+});
+test('structure errors distinguish old gateway, missing report and outage',async t=>{
+  const env={MODEL_GATEWAY_URL:'https://gateway.example',MODEL_GATEWAY_TOKEN:'test-token'};
+  t.mock.method(globalThis,'fetch',async()=>Response.json({detail:'Not Found'},{status:404}));
+  const start=()=>new Request('http://test/api/structures/reports',{method:'POST',body:JSON.stringify({sequence:atlasSeq,request_id:'structure-test-2',lookup_atlas:true})});
+  assert.equal((await(await worker.fetch(start(),env)).json()).error,'gateway_upgrade_required');
+  const get=()=>new Request('http://test/api/structures/reports/'+'a'.repeat(32));
+  assert.equal((await(await worker.fetch(get(),env)).json()).error,'structure_report_not_found');
+  t.mock.method(globalThis,'fetch',async()=>{throw Error('offline');});
+  assert.equal((await worker.fetch(get(),env)).status,503);
+});
+test('3D viewer scripts are self-hosted and syntactically valid',async()=>{
+  for(const path of ['/assets/3dmol-2.5.5.js','/assets/structure-workbench.js']){
+    const r=await worker.fetch(new Request('http://test'+path),{});
+    assert.equal(r.status,200);assert.match(r.headers.get('content-type'),/javascript/);
+    new Script(await r.text());
+  }
+});
 const atlasHashFixture='4bbff14e49fc0da0d3902dab2290abdd';
 const atlasRecord={protein_hash:atlasHashFixture,sequence:atlasSeq,sequence_length:76,ptm:null,mean_plddt:null,residues_plddt:null,sae_features:[],pdb:null,folded_on_demand:false};
 const atlasRequest=body=>new Request('http://test/api/structures/atlas',{method:'POST',body:JSON.stringify(body)});

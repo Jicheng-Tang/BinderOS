@@ -8,6 +8,8 @@ import shutil
 import re
 import sys
 import uuid
+import hashlib
+import signal
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -17,11 +19,13 @@ from pydantic import BaseModel, Field, field_validator
 try:
     from .model_adapters import installed_models, validate_new_model, build_new_command, collect_new_result
     from . import benchmark
+    from . import structure_report
 except ImportError:
     from model_adapters import installed_models, validate_new_model, build_new_command, collect_new_result
     import benchmark
+    import structure_report
 
-app = FastAPI(title="BinderOS Model Gateway", version="0.4.0")
+app = FastAPI(title="BinderOS Model Gateway", version="0.5.0")
 JOBS: dict[str, dict] = {}
 JOB_ROOT = Path(os.getenv("BINDEROS_JOB_ROOT", "/tmp/binderos-jobs")).resolve()
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
@@ -30,6 +34,18 @@ RUN_LOCK = asyncio.Semaphore(1)
 CAMPAIGN_ROOT = JOB_ROOT / "campaigns"
 CAMPAIGN_ROOT.mkdir(exist_ok=True)
 CAMPAIGNS: dict[str, dict] = {}
+REPORT_ROOT = JOB_ROOT / 'structure-reports'
+REPORT_ROOT.mkdir(exist_ok=True)
+REPORTS: dict[str, dict] = {}
+for record in REPORT_ROOT.glob('*.json'):
+    try:
+        report = json.loads(record.read_text())
+        if report['status'] in ('queued', 'running'):
+            report.update(status='failed', error='gateway_restarted: partial results retained; explicitly resubmit')
+            record.write_text(json.dumps(report))
+        REPORTS[report['id']] = report
+    except (ValueError, KeyError):
+        continue
 for record in CAMPAIGN_ROOT.glob("*.json"):
     try:
         campaign = json.loads(record.read_text())
@@ -173,13 +189,23 @@ async def execute_job(job_id: str, request: JobRequest) -> None:
     try:
         command = build_command(job_dir, request)
         with (job_dir / "job.log").open("w") as log:
-            process = await asyncio.create_subprocess_exec(*command, cwd=job_dir, stdout=log, stderr=asyncio.subprocess.STDOUT)
+            process = await asyncio.create_subprocess_exec(*command, cwd=job_dir, stdout=log, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
             try:
                 await asyncio.wait_for(process.wait(), timeout=int(os.getenv("BINDEROS_JOB_TIMEOUT", "1200")))
             except asyncio.TimeoutError:
-                process.kill()
+                os.killpg(process.pid, signal.SIGKILL)
                 await process.wait()
                 raise RuntimeError("model_timeout: 计算超时，请缩短序列或检查本机日志")
+            except asyncio.CancelledError:
+                if process.returncode is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=10)
+                    except asyncio.TimeoutError:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        await process.wait()
+                JOBS[job_id].update(status='failed', finished_at=now(), error='gateway_stopped')
+                raise
         if process.returncode != 0:
             raise RuntimeError(f"model exited with code {process.returncode}")
         JOBS[job_id].update(status="succeeded", finished_at=now(), result=collect_result(job_dir, request.model))
@@ -191,7 +217,7 @@ async def execute_job(job_id: str, request: JobRequest) -> None:
 
 @app.get("/health")
 async def health(_: None = Depends(authorize)) -> dict:
-    return {"status": "ok", "version": app.version, "models": available_models(), "benchmarks": [benchmark.ID], "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "active_jobs": sum(j["status"] in ("queued", "running") for j in JOBS.values())}
+    return {"status": "ok", "version": app.version, "models": available_models(), "benchmarks": [benchmark.ID], "capabilities": ['structure-report-v1'], "structure_limits": {"min_length":10,"max_length":200}, "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "active_jobs": sum(j["status"] in ("queued", "running") for j in JOBS.values()), "active_reports":sum(j['status'] in ('queued','running') for j in REPORTS.values())}
 
 
 @app.post("/v1/jobs", status_code=202)
@@ -301,3 +327,88 @@ async def cancel_campaign(campaign_id: str, _: None = Depends(authorize)) -> dic
         campaign["cancel_requested"] = True
         save_campaign(campaign)
     return campaign
+
+
+class StructureRequest(BaseModel):
+    model_config = {'extra':'forbid', 'strict':True}
+    sequence: str = Field(min_length=10, max_length=200, pattern=r'^[ACDEFGHIKLMNPQRSTVWY]+$')
+    request_id: str = Field(pattern=r'^[a-zA-Z0-9-]{8,80}$')
+    lookup_atlas: bool = True
+
+
+def save_report(report):
+    temp = REPORT_ROOT / (report['id']+'.tmp')
+    temp.write_text(json.dumps(report, ensure_ascii=False))
+    temp.replace(REPORT_ROOT / (report['id']+'.json'))
+
+
+async def run_structure_report(report):
+    def stage(value):
+        report.update(status='running', stage=value, updated_at=now())
+        save_report(report)
+
+    async def model_job(model):
+        request = JobRequest(model=model, name='structure-'+report['id'][:12], sequence=report['sequence'], parameters={'seed':1} if model=='boltz2' else {})
+        job_id = uuid.uuid4().hex
+        JOBS[job_id]={'id':job_id,'model':model,'status':'queued','report_id':report['id'],'sequence_length':len(report['sequence']),'created_at':now()}
+        save_job(job_id)
+        report['jobs'].append({'id':job_id,'model':model});save_report(report)
+        await run_job(job_id, request)
+        if JOBS[job_id]['status']!='succeeded':
+            raise RuntimeError(f'{model}: {JOBS[job_id].get("error","failed")}')
+        return JOBS[job_id]['result']
+
+    try:
+        sequence=report['sequence'];pdb=None;analysis=None;source=None;confidence={}
+        if report['lookup_atlas']:
+            stage('lookup_existing_structure')
+            lookup=await asyncio.to_thread(structure_report.lookup_atlas,sequence)
+            report['lookup']={k:v for k,v in lookup.items() if k!='pdb'}
+            if lookup.get('pdb'):
+                try:
+                    analysis=await asyncio.to_thread(structure_report.analyze,lookup['pdb'],sequence,True,None,False)
+                    pdb=lookup['pdb'];source={'provider':'Biohub ESM Atlas','kind':'existing_prediction','source_url':lookup['source_url']}
+                except Exception:
+                    report['lookup']['status']='structure_rejected'
+        else:
+            report['lookup']={'status':'skipped_by_user'}
+        stage('topology')
+        topology=await model_job('deeptmhmm2')
+        report['topology']=topology;save_report(report)
+        if not pdb:
+            stage('predicting_structure')
+            prediction=await model_job('boltz2')
+            report['prediction_provenance']=prediction['provenance'];save_report(report)
+            pdb=prediction['structures'][0]['pdb'];confidence=prediction['structures'][0]['confidence']
+            source={'provider':'Boltz-2','kind':'new_prediction','source_url':'https://github.com/jwohlwend/boltz','provenance':prediction['provenance']}
+            stage('analyzing_structure')
+            analysis=await asyncio.to_thread(structure_report.analyze,pdb,sequence,True,confidence)
+            analysis['warnings']=prediction.get('warnings',[])+analysis['warnings']
+        report.update(status='succeeded',stage='complete',finished_at=now(),result={'schema_version':'binderos.structure-report.v1','sequence':sequence,'sequence_sha256':hashlib.sha256(sequence.encode()).hexdigest(),'source':source,'pdb_text':pdb,'analysis':analysis,'topology':topology})
+    except Exception as error:
+        report.update(status='failed',stage='failed',finished_at=now(),error=str(error))
+    finally:
+        save_report(report)
+
+
+@app.post('/v1/structures', status_code=202)
+async def create_structure_report(request: StructureRequest, tasks: BackgroundTasks, _: None = Depends(authorize)):
+    for report in REPORTS.values():
+        if report['request_id']==request.request_id:
+            if report['sequence']!=request.sequence or report['lookup_atlas']!=request.lookup_atlas:
+                raise HTTPException(status_code=409,detail='request_id_payload_mismatch')
+            return report
+    if not {'deeptmhmm2','boltz2'} <= set(available_models()):
+        raise HTTPException(status_code=503,detail='structure_models_unavailable')
+    if any(r['status'] in ('queued','running') for r in REPORTS.values()) or sum(j['status'] in ('queued','running') for j in JOBS.values())>=4:
+        raise HTTPException(status_code=429,detail='structure_queue_busy')
+    report={'id':uuid.uuid4().hex,**request.model_dump(),'status':'queued','stage':'queued','created_at':now(),'jobs':[]}
+    REPORTS[report['id']]=report;save_report(report);tasks.add_task(run_structure_report,report)
+    return report
+
+
+@app.get('/v1/structures/{report_id}')
+async def get_structure_report(report_id: str, _: None = Depends(authorize)):
+    if report_id not in REPORTS:
+        raise HTTPException(status_code=404,detail='structure_report_not_found')
+    return REPORTS[report_id]

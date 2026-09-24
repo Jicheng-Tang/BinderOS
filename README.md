@@ -34,7 +34,23 @@ The model gateway uses the variables in `gateway/.env.example`.
 
 ## Local checks
 
-`npm run check` builds the Worker artifact, validates `default.fetch`, and tests report streaming, upstream failures, source validation and gateway status. Gateway tests: `cd gateway && python -m unittest test_gateway.py` (requires httpx).
+Run `npm ci --ignore-scripts` first. `npm run check` builds the Worker artifact, validates `default.fetch`, and tests report streaming, upstream failures, source validation and gateway status. Gateway tests: `python -m unittest gateway.test_gateway gateway.test_benchmark gateway.test_structure_report` (requires gateway dependencies and httpx).
+
+## Single-sequence structure workbench (gateway 0.5.0)
+
+Stage 2 accepts one canonical 10–200-aa protein sequence. This is the current local pilot limit, not a universal model limit. Optional Biohub Atlas lookup uses the exact sequence hash, disables on-demand folding, and never sends the Biohub key. An exact, complete, single-chain PDB is required; misses, unavailable records and rejected structures fall back to local Boltz-2. Local DeepTMHMM2 supplies topology. No new paid inference is enabled.
+
+Reports preserve sequence/SHA256, source, actual model job IDs, runtime provenance, raw PDB, confidence JSON, residue numbering and warnings. Biopython 1.86 verifies the entire structure sequence and computes static solvent-accessible areas (Shrake–Rupley, 1.4 Å probe, 100 points/atom). Boltz 2.1.1's PDB writer places pLDDT multiplied by 100 into B-factor fields; those values are presented on a 0–100 scale. Atlas confidence units are not assumed, and experimental B-factors are not interpreted as pLDDT. No SASA-to-functional-site, binding-affinity or experimental-success inference is made.
+
+The 3Dmol.js 2.5.5 viewer is served locally with its BSD-3-Clause/embedded dependency notices. It reads actual PDB atom coordinates, supports rotation, zoom, cartoon/sticks/surface styles, residue selection and confidence coloring where units are known. PDB, JSON and residue CSV downloads remain available if WebGL is unavailable. The explicitly labeled 1UBQ experimental reference is not a newly computed result and never substitutes for a failed prediction.
+
+`POST /api/structures/reports` accepts `{sequence,request_id,lookup_atlas}`; `GET /api/structures/reports/<id>` restores the durable gateway record. A repeated request ID with identical input does not recompute; changed input is rejected. Only one structure report is active at a time, sharing the serial GPU queue. Closing a browser does not cancel computation; the last report ID can be restored. Interrupted jobs are marked failed on service restart, with partial records retained, rather than silently rerun. A private `?structure=<report-id>` link restores a report.
+
+### Supervised local service and connection requirements
+
+From the **host system terminal**, confirm no active jobs, stop the manually launched gateway, then run `python3 gateway/install-service.py`. It installs a user-level `binderos-gateway.service`, starts it when the user logs in, restarts it after crashes and survives closing the terminal. It does not require or modify NVIDIA drivers, enable login linger, publish a tunnel or terminate an unknown process. Existing different service definitions are backed up. Inspect with `systemctl --user status binderos-gateway.service`; logs with `journalctl --user -u binderos-gateway.service -n 80`; stop with `systemctl --user stop binderos-gateway.service`. To remove startup activation, use `systemctl --user disable --now binderos-gateway.service`.
+
+The website and GPU service still require an authenticated, stable external connection. A temporary `trycloudflare.com` address is explicitly labeled as temporary and is not production-ready. A fixed named tunnel/domain or another approved persistent endpoint must be configured separately; its service, external health and host restart behavior must then be verified. Site privacy and server-side token storage remain mandatory. Installation scripts and mocked tests are not evidence of a live end-to-end prediction; record real run IDs separately after GPU execution.
 
 ## Current pilot: DeepSeek and a local DeepTMHMM2 server
 

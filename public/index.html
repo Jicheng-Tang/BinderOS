@@ -177,6 +177,19 @@
       .sequence-input { width: 100%; min-height: 92px; resize: vertical; border: 1px solid #29425f; border-radius: 10px; color: var(--text); background: #071421; padding: 11px 12px; outline: none; font: .7rem/1.55 ui-monospace,monospace; }
       .sequence-input:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(48,230,197,.1); }
       #atlasPanel p, #atlasPanel label, #atlasPanel summary, #atlasPanel a, #atlasPanel button, #atlasPanel input, #atlasPanel textarea { font-size: .875rem; }
+      .structure-workbench { padding: 22px; margin-bottom: 20px; }
+      .structure-workbench p, .structure-workbench label, .structure-workbench button, .structure-workbench select { font-size: .9rem; }
+      .structure-workbench textarea { font-size: .9rem; min-height: 90px; }
+      .structure-layout { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(250px,1fr); gap: 20px; margin-top: 20px; }
+      .molecule-canvas { position: relative; height: 440px; width: 100%; overflow: hidden; background: #071421; border: 1px solid #29425f; border-radius: 12px; }
+      .viewer-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 0; }
+      .residue-strip { display: flex; flex-wrap: wrap; gap: 3px; max-height: 160px; overflow: auto; padding: 10px 0; }
+      .residue-strip button { padding: 4px 6px; border: 1px solid #29425f; border-radius: 3px; font: .85rem ui-monospace,monospace; color: #c6daef; background: #0d1e30; cursor:pointer; }
+      .residue-strip button:focus-visible { outline: 2px solid #fff; }
+      .structure-summary { overflow-wrap: anywhere; min-width: 0; }
+      .structure-summary h3 { margin: 0 0 14px; }.structure-summary p { line-height: 1.7; }
+      .structure-legend-live { font-size: .875rem; line-height: 1.7; color: #a6bbd0; }
+      @media(max-width:900px){.structure-layout{grid-template-columns:1fr}.molecule-canvas{height:360px}.structure-workbench{padding:15px}}
       .integration-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 9px; }
       .job-status { margin: 10px 0 0; min-height: 18px; color: #71879d; font-size: .7rem; line-height: 1.45; }
       .ops-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; }
@@ -213,7 +226,7 @@
         <div class="sidebar-note"><b>Human-in-the-loop</b><p>关键节点由研究员确认；每项 AI 决策保留证据、评分与版本记录。</p></div>
       </aside>
       <main class="main">
-        <header class="topbar"><div class="crumb">项目 / <b>人类免疫调节靶点探索</b></div><div class="project-actions"><span class="system-pill off" id="aiStatus">检测服务中</span><button class="ghost audit-button" id="auditButton">决策日志</button><span class="run-id">RUN · BOS-2409-018</span><div class="avatar" aria-label="当前用户">YL</div></div></header>
+        <header class="topbar"><div class="crumb">BinderOS / <b>蛋白研究工作台</b></div><div class="project-actions"><span class="system-pill off" id="aiStatus">检测服务中</span><button class="ghost audit-button" id="auditButton">决策日志</button><span class="run-id">研究试运行</span><div class="avatar" aria-label="BinderOS">BO</div></div></header>
         <section class="stage-panel active" data-panel="1">
         <section class="stage-head">
           <div><p class="eyebrow">Stage 01 · target discovery</p><h1>从物种出发，锁定值得设计的靶点</h1><p>AI 正在汇总文献、蛋白定位、疾病关联、可成药性与同源风险，为每个候选靶点生成可追溯的选择依据。</p></div>
@@ -244,8 +257,31 @@
 
         <section class="stage-panel" data-panel="2">
           <section class="stage-head">
-            <div><p class="eyebrow">Stage 02 · structure &amp; epitope</p><h1>先查已有结构，再决定是否预测</h1><p>按完整序列精确查询 Biohub ESM Atlas。找到蛋白记录不等于已有结构；功能特征也不等于已验证的结合位点。</p></div>
+            <div><p class="eyebrow">Stage 02 · sequence to structure</p><h1>从序列到可查看的真实结构文件</h1><p>已有结构查询、本机预测、拓扑与置信度报告。三维视图直接读取原子坐标；预测结构不等于实验测定结构。</p></div>
           </section>
+          <section class="card structure-workbench" id="structureWorkbench">
+            <label for="structureSequence">输入单条蛋白序列 / FASTA · 当前本机支持 10–200 aa</label>
+            <textarea class="sequence-input" id="structureSequence" maxlength="2000" placeholder="粘贴标准氨基酸序列，或载入公开泛素序列。不会自动截断、删除信号肽或补齐未知氨基酸。"></textarea>
+            <p><label><input type="checkbox" id="structureLookup" checked /> 优先查询 Atlas 已有结构；仅向 Biohub 发送序列摘要标识。关闭后全程本机预测。</label></p>
+            <div class="integration-actions"><button class="ghost" id="structureExample">载入泛素序列</button><button class="primary" id="structureSubmit">生成结构分析报告</button><button class="ghost" id="structureResume" hidden>恢复上次报告</button><button class="ghost" id="structureReference">查看 1UBQ 实验参考</button></div>
+            <p class="job-status" id="structureConnection" role="status">正在检查计算服务…</p>
+            <p id="structureStatus" role="status" aria-live="polite">尚未提交。结构任务保存在本机，关闭网页不会取消计算；此处不启动 binder 设计或付费云端推理。</p>
+            <div class="structure-layout">
+              <div>
+                <div class="molecule-canvas" id="structureViewer" aria-label="蛋白三维结构查看器"><p style="padding:24px" id="structureEmpty">完成报告后在此显示结构。也可先查看公开的 1UBQ 实验参考，检查三维显示效果。</p></div>
+                <div class="viewer-controls">
+                  <label>显示 <select class="select" id="structureStyle"><option value="cartoon">带状</option><option value="sticks">带状 + 棒状</option><option value="surface">分子表面</option></select></label>
+                  <label>着色 <select class="select" id="structureColor"><option value="confidence">置信度</option><option value="chain">链颜色</option><option value="spectrum">序列渐变</option></select></label>
+                  <button class="ghost" id="structureReset">重置视角</button>
+                </div>
+                <p class="structure-legend-live" id="structureLegend">拖动旋转 · 滚轮或双指缩放 · 点击下方序列选择残基</p>
+                <div id="structureResidues" class="residue-strip" aria-label="逐残基序列选择"></div>
+                <p id="structureSelected" role="status">尚未选择残基。</p>
+              </div>
+              <div class="structure-summary" id="structureSummary"><h3>结构分析报告</h3><p>这里将显示序列核对、结构来源、逐残基置信度、低置信区域、表面可及面积和拓扑结果。不会填入演示评分。</p></div>
+            </div>
+          </section>
+          <details class="card" style="padding:18px;margin-bottom:20px"><summary>单模型工具、Atlas 独立查询与旧版演示</summary>
           <section class="card run-panel" id="atlasPanel">
             <div class="card-head"><div><div class="card-title">Biohub · 已有结构查询</div><div class="card-sub">真实接口 · 不启动 GPU 预测或 binder 设计</div></div><span class="source-chip">Atlas Alpha</span></div>
             <div class="integration-form">
@@ -316,6 +352,7 @@
             </div>
           </section>
           <div class="stage-actions"><p>演示选择：<b id="siteDecision">TIGIT · 位点 A</b><br/>Atlas 结果不会自动套用演示位点，也不会启动设计。</p><div><button class="ghost" data-goto="1">返回靶点选择</button> <button class="primary" data-goto="3">查看独立标准闭环 →</button></div></div>
+          </details>
         </section>
 
         <section class="stage-panel" data-panel="3">
@@ -520,7 +557,7 @@
           $('#gatewayServiceTag').textContent = gateway?.online ? '在线' : gateway?.configured ? '离线' : '待配置';
           $('#gatewayServiceTag').classList.toggle('off', !gateway?.online);
           $('#gatewayServiceDesc').textContent = gateway?.online ? `可用模型：${(gateway.models || []).join(' / ')}` : '计算机须保持开机，计算服务和连接通道须运行';
-          $$('.model-gateway-state').forEach(node => { const ready = gateway?.online && gateway.models?.includes(node.dataset.model); node.textContent = ready ? '可提交' : '未就绪'; node.className = ready ? 'status-ok model-gateway-state' : 'status-warn model-gateway-state'; });
+          $$('.model-gateway-state').forEach(node => { const planned=['alphafold3','bindcraft'].includes(node.dataset.model);const ready = gateway?.online && gateway.models?.includes(node.dataset.model); node.textContent = ready ? '可提交' : planned ? '未部署' : gateway?.online ? '本机未启用' : '连接不可用'; node.className = ready ? 'status-ok model-gateway-state' : 'status-warn model-gateway-state'; });
           $$('#modelSelect option').forEach(option => { option.disabled = !gateway?.online || !gateway.models?.includes(option.value); });
           $('#modelJobButton').disabled = !gateway?.online;
           return health;
@@ -747,5 +784,7 @@
       }
       registerAgentTools();
     </script>
+    <script src="/assets/3dmol-2.5.5.js"></script>
+    <script src="/assets/structure-workbench.js"></script>
   </body>
 </html>

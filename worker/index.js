@@ -211,9 +211,13 @@ async function handleModelStatus(pathname, env) {
 }
 
 async function handleHealth(env) {
-  let gateway = { configured: Boolean(env.MODEL_GATEWAY_URL), online: false, models: [] };
+  let gateway = { configured: Boolean(env.MODEL_GATEWAY_URL && env.MODEL_GATEWAY_TOKEN), online: false, models: [], capabilities: [], connection_type: env.MODEL_GATEWAY_URL?.includes('.trycloudflare.com') ? 'temporary_tunnel' : 'configured_endpoint', checked_at: new Date().toISOString() };
   if (env.MODEL_GATEWAY_URL) {
-    try { const status = await fetchJson(`${env.MODEL_GATEWAY_URL.replace(/\/$/, "")}/health`, { headers: gatewayHeaders(env) }, 6000); gateway = { ...gateway, online: status.status === "ok", models: status.models || [], benchmarks: status.benchmarks || [], version: status.version, device: status.device }; } catch { /* Offline is reported separately from configuration. */ }
+    try {
+      const response=await fetch(`${env.MODEL_GATEWAY_URL.replace(/\/$/, "")}/health`,{headers:gatewayHeaders(env),redirect:'manual',signal:AbortSignal.timeout(6000)});
+      if(!response.ok)throw new Error(response.status===401?'authentication_failed':`http_${response.status}`);
+      const status=await response.json();gateway={...gateway,online:status.status==='ok',models:status.models||[],benchmarks:status.benchmarks||[],capabilities:status.capabilities||[],structure_limits:status.structure_limits,active_jobs:status.active_jobs,active_reports:status.active_reports,version:status.version,device:status.device};
+    }catch(e){gateway.error=/^(authentication_failed|http_[0-9]+)$/.test(e.message)?e.message:'connection_unavailable';}
   }
   return json({
     status: "ok",
@@ -225,6 +229,23 @@ async function handleHealth(env) {
       model_gateway: gateway,
     },
   });
+}
+
+async function handleStructureProxy(request,env,pathname){
+  if(!env.MODEL_GATEWAY_URL||!env.MODEL_GATEWAY_TOKEN)return json({error:'model_gateway_unconfigured'},503);
+  const suffix=pathname.slice('/api/structures/reports'.length);
+  if((suffix&&!/^\/[a-f0-9]{32}$/.test(suffix))||!((!suffix&&request.method==='POST')||(suffix&&request.method==='GET')))return json({error:'invalid_structure_request'},400);
+  let body;
+  if(!suffix){
+    body=await readJson(request);
+    if(!body||typeof body!=='object'||Object.keys(body).some(k=>!['sequence','request_id','lookup_atlas'].includes(k))||typeof body.sequence!=='string'||!/^[ACDEFGHIKLMNPQRSTVWY]{10,200}$/.test(body.sequence)||!/^[a-zA-Z0-9-]{8,80}$/.test(body.request_id||'')||typeof body.lookup_atlas!=='boolean')return json({error:'invalid_structure_request',message:'请输入 10–200 aa 的标准单链序列。'},400);
+  }
+  try{
+    const r=await fetch(`${env.MODEL_GATEWAY_URL.replace(/\/$/,'')}/v1/structures${suffix}`,{method:request.method,headers:gatewayHeaders(env),redirect:'manual',...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(15000)});
+    const data=await r.json().catch(()=>({error:'gateway_invalid_response'}));
+    if(r.status===404)return json({error:suffix?'structure_report_not_found':'gateway_upgrade_required',message:suffix?'未找到该报告，请核对任务编号。':'本机服务需要更新至 0.5.0。'},404);
+    return json(data,r.status>=300&&r.status<400?502:r.status);
+  }catch{return json({error:'gateway_connection_unavailable',message:'网站暂时无法联系计算机。已有任务不会因此取消；请稍后恢复查询，不要重复新建。'},503);}
 }
 
 async function handleBenchmark(request, env, pathname) {
@@ -250,6 +271,9 @@ export default {
     try {
       if (request.method === "GET" && url.pathname === "/api/health") return handleHealth(env);
       if (request.method === "POST" && url.pathname === "/api/structures/atlas") return await handleAtlasLookup(request);
+      if(url.pathname==='/api/structures/reports'||url.pathname.startsWith('/api/structures/reports/'))return await handleStructureProxy(request,env,url.pathname);
+      if(request.method==='GET'&&url.pathname==='/assets/3dmol-2.5.5.js')return new Response(molecularViewerLibrary,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'private, max-age=86400','x-content-type-options':'nosniff'}});
+      if(request.method==='GET'&&url.pathname==='/assets/structure-workbench.js')return new Response(structureWorkbenchScript,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
       if (request.method === "GET" && url.pathname === "/api/models/example") return json({ name: "Ubiquitin · 1UBQ · 公开联调样例", source_url: "https://www.rcsb.org/structure/1UBQ", sequence: "MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG", pdb_text: examplePdb });
       if (request.method === "POST" && url.pathname === "/api/research") return request.headers.get("accept")?.includes("application/x-ndjson") ? streamResearch(request, env, ctx) : await handleResearch(request, env);
       if (request.method === "POST" && url.pathname === "/api/models/jobs") return await handleModelJob(request, env);
