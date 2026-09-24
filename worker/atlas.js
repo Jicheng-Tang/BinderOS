@@ -116,6 +116,8 @@ async function handleAtlasLookup(request) {
     if(structure.status==='sequence_or_format_mismatch')report.caveats.push('返回结构未通过单链完整序列核对，已隔离，不能作为当前靶标结构下载。');
     return json(report);
   }catch(e){
+    // No credentials are sent on this path. Do not log sequence, record, or URL.
+    console.error(JSON.stringify({event:'atlas_lookup_failure',name:e?.name,message:String(e?.message||'unknown').replace(/https?:\/\/\S+/g,'[upstream]').slice(0,200)}));
     const error=/^(atlas_[a-z_]+(?:_[0-9]+)?)$/.test(e.message)?e.message:'atlas_unavailable';
     return json({error,message:'Atlas 查询失败或返回数据不一致；这不表示蛋白不存在，请稍后重试。'},502);
   }
