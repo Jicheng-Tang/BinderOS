@@ -219,7 +219,7 @@
         <div class="nav-title">DESIGN PIPELINE</div>
         <nav class="nav">
           <button class="nav-item active" data-stage="1" aria-pressed="true"><span class="nav-index">01</span><span class="nav-label"><strong>靶点发现</strong><span>文献与可行性</span></span><span class="nav-state live"></span></button>
-          <button class="nav-item" data-stage="2" aria-pressed="false"><span class="nav-index">02</span><span class="nav-label"><strong>结构与位点</strong><span>多模型联合评估</span></span><span class="nav-state"></span></button>
+          <button class="nav-item" data-stage="2" aria-pressed="false" title="蛋白结构查询与 3D 窗口"><span class="nav-index">02</span><span class="nav-label"><strong>蛋白结构 · 3D</strong><span>查询、预测与分析</span></span><span class="nav-state"></span></button>
           <button class="nav-item" data-stage="3" aria-pressed="false"><span class="nav-index">03</span><span class="nav-label"><strong>Binder 设计</strong><span>生成、筛选与优化</span></span><span class="nav-state"></span></button>
           <button class="nav-item" data-stage="4" aria-pressed="false"><span class="nav-index">04</span><span class="nav-label"><strong>集成与协作</strong><span>服务状态与质量 Gate</span></span><span class="nav-state"></span></button>
         </nav>
@@ -260,8 +260,17 @@
             <div><p class="eyebrow">Stage 02 · sequence to structure</p><h1>从序列到可查看的真实结构文件</h1><p>已有结构查询、本机预测、拓扑与置信度报告。三维视图直接读取原子坐标；预测结构不等于实验测定结构。</p></div>
           </section>
           <section class="card structure-workbench" id="structureWorkbench">
-            <label for="structureSequence">输入单条蛋白序列 / FASTA · 当前本机支持 10–200 aa</label>
-            <textarea class="sequence-input" id="structureSequence" maxlength="2000" placeholder="粘贴标准氨基酸序列，或载入公开泛素序列。不会自动截断、删除信号肽或补齐未知氨基酸。"></textarea>
+            <h2>查找蛋白结构 · 3D 窗口</h2>
+            <label for="structureName">蛋白名称 / 基因名 / UniProt 编号</label>
+            <input class="input" id="structureName" maxlength="120" placeholder="如 green fluorescent protein 或 P42212" />
+            <label for="structureOrganism">物种（名称搜索时可选）</label><input class="input" id="structureOrganism" maxlength="100" placeholder="如 Aequorea victoria" />
+            <div class="integration-actions"><button class="ghost" id="structureNameSearch">查找蛋白条目</button><button class="ghost" id="structureViewJump">前往 3D 窗口 ↓</button></div>
+            <div id="structureMatches" role="status" aria-live="polite"></div>
+            <label for="structureSequence">或输入单条蛋白序列 / FASTA · 数据库查询 1–5000 aa</label>
+            <textarea class="sequence-input" id="structureSequence" maxlength="20000" placeholder="粘贴完整序列查询 Biohub Atlas；不受本机 200 aa 预测限制。不会自动截断或用相似蛋白冒充。"></textarea>
+            <div class="integration-actions"><button class="primary" id="structureDatabase">查询已有结构并显示 3D</button></div>
+            <p class="job-status">名称查询：UniProt 确认身份 → AlphaFold DB / Biohub。序列查询：Biohub 精确匹配。只读查询不会启动新预测或消耗推理额度；未命中会明确说明。序列摘要或名称会发送给相应数据库。</p>
+            <h3>本机新预测 · 10–200 aa</h3>
             <p><label><input type="checkbox" id="structureLookup" checked /> 优先查询 Atlas 已有结构；仅向 Biohub 发送序列摘要标识。关闭后全程本机预测。</label></p>
             <div class="integration-actions"><button class="ghost" id="structureExample">载入泛素序列</button><button class="primary" id="structureSubmit">生成结构分析报告</button><button class="ghost" id="structureResume" hidden>恢复上次报告</button><button class="ghost" id="structureReference">查看 1UBQ 实验参考</button></div>
             <p class="job-status" id="structureConnection" role="status">正在检查计算服务…</p>
@@ -272,7 +281,7 @@
                 <div class="viewer-controls">
                   <label>显示 <select class="select" id="structureStyle"><option value="cartoon">带状</option><option value="sticks">带状 + 棒状</option><option value="surface">分子表面</option></select></label>
                   <label>着色 <select class="select" id="structureColor"><option value="confidence">置信度</option><option value="chain">链颜色</option><option value="spectrum">序列渐变</option></select></label>
-                  <button class="ghost" id="structureReset">重置视角</button>
+                  <button class="ghost" id="structureReset">重置视角</button><button class="ghost" id="structureFullscreen">放大 3D 窗口</button>
                 </div>
                 <p class="structure-legend-live" id="structureLegend">拖动旋转 · 滚轮或双指缩放 · 点击下方序列选择残基</p>
                 <div id="structureResidues" class="residue-strip" aria-label="逐残基序列选择"></div>

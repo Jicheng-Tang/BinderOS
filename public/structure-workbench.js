@@ -15,6 +15,7 @@
     try{viewer=$3Dmol.createViewer(el('structureViewer'),{backgroundColor:'#071421',antialias:true});}
     catch{throw Error('浏览器无法启用 WebGL。仍可下载原始结构与报告。');}
     $3Dmol.setSyncSurface(true);
+    const exit=button(el('structureViewer'),'退出全屏',()=>document.exitFullscreen());exit.id='structureExit';Object.assign(exit.style,{display:'none',position:'absolute',right:'16px',top:'16px',zIndex:'20',background:'#142e40'});
     new ResizeObserver(()=>{if(viewer){viewer.resize();viewer.render();}}).observe(el('structureViewer'));
     return viewer;
   }
@@ -69,8 +70,8 @@
     try{showStructure(result.pdb_text,{name:result.source.provider,kind:'predicted',analysis:a,report});}
     catch(e){text(parent,'p',e.message);}
   }
-  async function api(path,options={}){
-    const r=await fetch(path,{...options,signal:AbortSignal.timeout(22000)});const data=await r.json();
+  async function api(path,options={},timeout=22000){
+    const r=await fetch(path,{...options,signal:AbortSignal.timeout(timeout)});const data=await r.json();
     if(!r.ok){const error=new Error(data.message||({structure_queue_busy:'已有结构任务在运行，请恢复报告或稍后再试。',structure_models_unavailable:'本机模型尚未就绪。',request_id_payload_mismatch:'请求标识与输入不一致，请刷新后重新提交。'}[data.detail])||data.detail||data.error||'请求失败');error.status=r.status;throw error;}
     return data;
   }
@@ -99,7 +100,7 @@
       connectionReady=!!(g.online&&g.capabilities?.includes('structure-report-v1')&&['boltz2','deeptmhmm2'].every(m=>g.models.includes(m)));
       el('structureConnection').textContent=!g.online?`连接不可用（${g.error||'未配置'}）。不代表模型未安装；计算服务与外网通道需要同时在线。`:!g.capabilities?.includes('structure-report-v1')?`本机在线，但需重启加载 0.5.0（当前 ${g.version}）。`:`本机在线 · ${g.version} · ${g.device} · 正在运行 ${g.active_jobs||0} 个模型任务${g.connection_type==='temporary_tunnel'?' · 当前仍为临时通道，尚非长期稳定连接':''}`;
     }catch{connectionReady=false;el('structureConnection').textContent='连接状态暂时无法确认，请稍后刷新。';}
-    el('structureSubmit').disabled=inFlight||!connectionReady;
+    el('structureSubmit').disabled=inFlight||!connectionReady||lookupBusy;
   }
   el('structureExample').onclick=async()=>{try{const s=await api('/api/models/example');el('structureSequence').value=s.sequence;}catch(e){el('structureStatus').textContent=e.message;}};
   el('structureReference').onclick=async()=>{
@@ -107,6 +108,7 @@
     try{const s=await api('/api/models/example');const parent=el('structureSummary');parent.replaceChildren();text(parent,'h3','1UBQ · 实验参考结构');text(parent,'p','这是真实公开 PDB 坐标，不是刚刚执行的预测，也不是当前输入序列的自动查询结果。');const link=text(parent,'a','查看 RCSB 来源');link.href=s.source_url;link.target='_blank';link.rel='noreferrer';button(parent,'下载实验参考 PDB',()=>save(s.pdb_text,'1UBQ-reference.pdb'));showStructure(s.pdb_text,{name:'1UBQ 实验参考',kind:'experimental_reference'});el('structureStatus').textContent='正在查看实验参考；没有新建模型任务。原任务如有运行，仍可点击恢复。';}catch(e){el('structureStatus').textContent=e.message;}
   };
   el('structureSubmit').onclick=async()=>{
+    if(lookupBusy)return;
     const lines=el('structureSequence').value.trim().split(/\r?\n/);if(lines[0]?.startsWith('>'))lines.shift();const sequence=lines.join('').replace(/\s/g,'').toUpperCase();
     if(!/^[ACDEFGHIKLMNPQRSTVWY]{10,200}$/.test(sequence)){el('structureStatus').textContent='请输入一条 10–200 aa 的标准序列；不接受多条 FASTA、未知残基或自动截断。';return;}
     const lookup_atlas=el('structureLookup').checked;
@@ -123,6 +125,46 @@
   el('structureResume').onclick=()=>{if(reportId){clearView();poll(reportId);}};
   el('structureStyle').onchange=styleViewer;el('structureColor').onchange=styleViewer;
   el('structureReset').onclick=()=>{if(viewer){selected=null;viewer.zoomTo();styleViewer();}};
+  el('structureFullscreen').onclick=async()=>{try{const box=el('structureViewer');if(document.fullscreenElement)await document.exitFullscreen();else await box.requestFullscreen();}catch{el('structureStatus').textContent='浏览器未允许全屏；仍可在窗口内旋转和缩放。';}};
+  el('structureViewJump').onclick=()=>el('structureViewer').scrollIntoView({behavior:'smooth',block:'start'});
+  document.addEventListener('fullscreenchange',()=>{if(el('structureExit'))el('structureExit').style.display=document.fullscreenElement?'block':'none';if(viewer){viewer.resize();viewer.zoomTo();viewer.render();}});
+  let lookupBusy=false;
+  const attemptText={exact_accession_resolved:'精确匹配后解析到蛋白编号',exact_full_structure:'取得完整匹配结构',not_found:'无记录',no_exact_full_structure:'没有完整序列一致的结构',unavailable_or_rejected:'服务不可用或数据未通过校验',record_without_structure:'有记录但没有结构坐标'};
+  async function lookupExisting(payload){
+    if(lookupBusy)return;
+    lookupBusy=true;el('structureDatabase').disabled=true;el('structureNameSearch').disabled=true;el('structureSubmit').disabled=true;el('structureReference').disabled=true;el('structureResume').disabled=true;
+    clearTimeout(pollTimer);activeId=null;clearView();el('structureStatus').textContent='正在查询真实结构数据库；未启动新的模型预测…';
+    try{
+      const report=await api('/api/structures/existing',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)},120000);
+      const p=el('structureSummary');p.replaceChildren();
+      if(report.sequence)el('structureSequence').value=report.sequence;
+      if(report.status!=='structure_available'){text(p,'h3','尚未取得可用结构');text(p,'p',report.message||'没有找到该蛋白。');el('structureStatus').textContent='查询结束，未运行新预测。';}
+      else{
+        text(p,'h3',report.identity?.name||'精确序列匹配结构');text(p,'p',[report.identity?.organism,report.identity?.accession,report.sequence.length+' aa'].filter(Boolean).join(' · '));
+        if(report.identity_note)text(p,'p',report.identity_note);
+        text(p,'p',report.source.provider+' · 数据库已有预测，不是本次新计算，也不是实验结构。');
+        const link=text(p,'a','查看原始来源');link.href=report.source.source_url;link.target='_blank';link.rel='noreferrer';
+        text(p,'p',`完整序列核对通过 · 平均 pLDDT：${format(report.analysis.mean_plddt)}${report.analysis.plddt_scale?' / 100':'（量纲未确认）'}`);
+        if(report.analysis.plddt_scale)text(p,'p','低置信区间：'+(report.analysis.low_confidence_regions.map(r=>r.start+'–'+r.end).join('，')||'未检出 <70 区间'));
+        if(report.source.attribution)text(p,'p',report.source.attribution);
+        text(p,'p','此次只查询结构：未运行拓扑、表面可及面积、功能位点或结合预测；pLDDT 不是实验成功率。');
+        button(p,'下载结构 PDB',()=>save(report.pdb_text,`BinderOS-${report.identity?.accession||'atlas'}.pdb`));button(p,'下载查询报告',()=>save(JSON.stringify(report,null,2),'BinderOS-structure-lookup.json','application/json'));
+        showStructure(report.pdb_text,{name:report.source.provider,kind:'existing_prediction',analysis:report.analysis,report});el('structureStatus').textContent=`已载入 ${report.sequence.length} aa 真实结构坐标。数据库查询不受本机 200 aa 预测限制。`;
+      }
+      for(const a of report.attempts||[])text(p,'p',`${a.provider}：${attemptText[a.status]||a.status}${a.error?'（'+a.error+'）':''}`);
+    }catch(e){el('structureStatus').textContent=e.message;}
+    finally{lookupBusy=false;el('structureDatabase').disabled=false;el('structureNameSearch').disabled=false;el('structureReference').disabled=false;el('structureResume').disabled=false;el('structureSubmit').disabled=inFlight||!connectionReady;}
+  }
+  el('structureDatabase').onclick=()=>lookupExisting({sequence:el('structureSequence').value});
+  el('structureNameSearch').onclick=async()=>{
+    const parent=el('structureMatches');parent.replaceChildren();text(parent,'p','正在查询蛋白身份…');el('structureNameSearch').disabled=true;
+    try{
+      const result=await api('/api/structures/search',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:el('structureName').value,organism:el('structureOrganism').value})},25000);
+      parent.replaceChildren();text(parent,'p',result.candidates.length?'请核对物种和编号，再选择要查看的蛋白：':'未找到条目。可尝试英文名称、基因名或 UniProt 编号。');
+      for(const c of result.candidates){const row=text(parent,'div','');row.style.marginBottom='12px';text(row,'p',`${c.name} · ${c.organism} · ${c.accession} · ${c.length} aa${c.reviewed?' · 已审阅':''}`);button(row,'查看此蛋白 3D',()=>lookupExisting({accession:c.accession}));}
+      if(result.truncated)text(parent,'p','仅显示前 8 条；请添加物种或更具体的名称缩小范围。');
+    }catch(e){parent.replaceChildren();text(parent,'p',e.message);}finally{el('structureNameSearch').disabled=false;}
+  };
   const reportLink=new URLSearchParams(location.search).get('structure');
   if(/^[a-f0-9]{32}$/.test(reportLink||'')){reportId=reportLink;localStorage.setItem('binderos-structure-id',reportId);el('structureResume').hidden=false;switchStage(2);poll(reportId);}
   health();setInterval(()=>{if(!document.hidden)health();},30000);

@@ -89,6 +89,43 @@ test('health does not advertise uninstalled models', async t => {
 });
 
 const atlasSeq='MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG';
+test('database lookup accepts a >200 aa exact structure, new AFDB fields, and rejects arbitrary hosts',async t=>{
+  const seq=atlasSeq.repeat(3),base=readFileSync(new URL('../public/examples/1UBQ.pdb',import.meta.url),'utf8').split('\n').filter(l=>l.startsWith('ATOM  '));
+  const pdb=[0,1,2].flatMap(copy=>base.map(l=>l.slice(0,22)+String(Number(l.slice(22,26))+copy*76).padStart(4)+l.slice(26))).join('\n');
+  let bad=false,downloads=0;
+  t.mock.method(globalThis,'fetch',async(url,init)=>{
+    assert.equal(init.redirect,'manual');assert.equal(init.headers.authorization,undefined);
+    if(url.startsWith('https://rest.uniprot.org/'))return Response.json({primaryAccession:'P42212',sequence:{value:seq,length:seq.length}});
+    if(url.includes('/api/prediction/'))return Response.json([{sequence:seq,sequenceStart:1,sequenceEnd:228,modelEntityId:'AF-P42212-F1',pdbUrl:bad?'https://untrusted.example/file.pdb':'https://alphafold.ebi.ac.uk/files/fixture.pdb'}]);
+    if(url.startsWith('https://alphafold.ebi.ac.uk/files/')){downloads++;return new Response(pdb);}
+    if(url.startsWith('https://biohub.ai/'))return new Response(null,{status:404});
+    throw Error('unexpected_host');
+  });
+  const request=()=>new Request('http://test/api/structures/existing',{method:'POST',body:JSON.stringify({accession:'P42212'})});
+  let j=await(await worker.fetch(request(),{})).json();assert.equal(j.status,'structure_available');assert.equal(j.analysis.residue_count,228);assert.equal(j.new_prediction,false);
+  bad=true;j=await(await worker.fetch(request(),{})).json();assert.equal(j.status,'lookup_incomplete');assert.equal(downloads,1);assert.ok(!j.pdb_text);
+});
+test('database search preserves identity choices and rejects malformed queries',async t=>{
+  t.mock.method(globalThis,'fetch',async(url)=>{assert.ok(url.startsWith('https://rest.uniprot.org/uniprotkb/search?'));return Response.json({results:[{primaryAccession:'P42212',proteinDescription:{recommendedName:{fullName:{value:'GFP'}}},organism:{scientificName:'Aequorea victoria'},sequence:{length:238}}]});});
+  const req=body=>new Request('http://test/api/structures/search',{method:'POST',body:JSON.stringify(body)});
+  let j=await(await worker.fetch(req({query:'GFP'}),{})).json();assert.equal(j.candidates[0].organism,'Aequorea victoria');assert.equal(j.candidates[0].length,238);
+  assert.equal((await worker.fetch(req({query:'A'.repeat(121)}),{})).status,400);
+});
+test('raw sequence resolves Atlas UniParc to an exact AlphaFold structure via official fallback',async t=>{
+  const pdb=readFileSync(new URL('../public/examples/1UBQ.pdb',import.meta.url),'utf8');let mismatched=false;
+  t.mock.method(globalThis,'fetch',async(url)=>{
+    if(url.startsWith('https://biohub.ai/'))return Response.json({sequence:atlasSeq,protein_hash:atlasHashFixture,source:'uniparc',accession:'UPI0000002FB4',pdb:null});
+    if(url.includes('/uniparc/'))return Response.json({uniParcId:'UPI0000002FB4',sequence:{value:mismatched?'G'+atlasSeq.slice(1):atlasSeq},uniParcCrossReferences:[{active:true,database:'UniProtKB/Swiss-Prot',id:'P42212'}]});
+    if(url.startsWith('https://rest.uniprot.org/'))return Response.json({primaryAccession:'P42212',sequence:{value:atlasSeq,length:76}});
+    if(url.includes('/api/prediction/'))return new Response(null,{status:403});
+    if(url.startsWith('https://www.ebi.ac.uk/'))return Response.json({structures:[{summary:{provider:'AlphaFold DB',uniprot_start:1,uniprot_end:76,coverage:1,sequence_identity:1,oligomeric_state:'MONOMER',model_identifier:'AF-P42212-F1',model_url:'https://alphafold.ebi.ac.uk/files/AF-P42212-F1-model_v6.cif'}}]});
+    if(url==='https://alphafold.ebi.ac.uk/files/AF-P42212-F1-model_v6.pdb')return new Response(pdb);
+    throw Error('unexpected_url');
+  });
+  const req=()=>new Request('http://test/api/structures/existing',{method:'POST',body:JSON.stringify({sequence:atlasSeq})});
+  let j=await(await worker.fetch(req(),{})).json();assert.equal(j.status,'structure_available');assert.match(j.identity_note,/不能推断/);assert.equal(j.source.provider,'AlphaFold DB');
+  mismatched=true;j=await(await worker.fetch(req(),{})).json();assert.equal(j.status,'lookup_incomplete');assert.ok(!j.pdb_text);
+});
 test('structure report proxy validates, authenticates and refuses redirects',async t=>{
   const env={MODEL_GATEWAY_URL:'https://gateway.example',MODEL_GATEWAY_TOKEN:'test-token'};
   const payload={sequence:atlasSeq,request_id:'structure-test-1',lookup_atlas:false};

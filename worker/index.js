@@ -271,6 +271,8 @@ export default {
     try {
       if (request.method === "GET" && url.pathname === "/api/health") return handleHealth(env);
       if (request.method === "POST" && url.pathname === "/api/structures/atlas") return await handleAtlasLookup(request);
+      if (request.method === "POST" && url.pathname === "/api/structures/search") return await handleProteinSearch(request);
+      if (request.method === "POST" && url.pathname === "/api/structures/existing") return await handleExistingStructure(request);
       if(url.pathname==='/api/structures/reports'||url.pathname.startsWith('/api/structures/reports/'))return await handleStructureProxy(request,env,url.pathname);
       if(request.method==='GET'&&url.pathname==='/assets/3dmol-2.5.5.js')return new Response(molecularViewerLibrary,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'private, max-age=86400','x-content-type-options':'nosniff'}});
       if(request.method==='GET'&&url.pathname==='/assets/structure-workbench.js')return new Response(structureWorkbenchScript,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
