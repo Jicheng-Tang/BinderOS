@@ -221,6 +221,7 @@ async function handleHealth(env) {
       europe_pmc: { configured: true, mode: "live_rest" },
       uniprot: { configured: true, mode: "live_rest" },
       deepseek: { configured: Boolean(env.DEEPSEEK_API_KEY), model: env.DEEPSEEK_MODEL || "deepseek-flash" },
+      biohub: { configured: Boolean(env.BIOHUB_API_KEY), atlas_mode: "exact_lookup_only", inference_enabled: false, key_authentication_verified: false },
       model_gateway: gateway,
     },
   });
@@ -248,6 +249,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (request.method === "GET" && url.pathname === "/api/health") return handleHealth(env);
+      if (request.method === "POST" && url.pathname === "/api/structures/atlas") return await handleAtlasLookup(request);
       if (request.method === "GET" && url.pathname === "/api/models/example") return json({ name: "Ubiquitin · 1UBQ · 公开联调样例", source_url: "https://www.rcsb.org/structure/1UBQ", sequence: "MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG", pdb_text: examplePdb });
       if (request.method === "POST" && url.pathname === "/api/research") return request.headers.get("accept")?.includes("application/x-ndjson") ? streamResearch(request, env, ctx) : await handleResearch(request, env);
       if (request.method === "POST" && url.pathname === "/api/models/jobs") return await handleModelJob(request, env);

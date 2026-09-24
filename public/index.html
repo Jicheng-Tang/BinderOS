@@ -176,6 +176,7 @@
       .integration-form label { display: block; color: #8398ad; font-size: .72rem; margin: 0 0 7px; }
       .sequence-input { width: 100%; min-height: 92px; resize: vertical; border: 1px solid #29425f; border-radius: 10px; color: var(--text); background: #071421; padding: 11px 12px; outline: none; font: .7rem/1.55 ui-monospace,monospace; }
       .sequence-input:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(48,230,197,.1); }
+      #atlasPanel p, #atlasPanel label, #atlasPanel summary, #atlasPanel a, #atlasPanel button, #atlasPanel input, #atlasPanel textarea { font-size: .875rem; }
       .integration-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 9px; }
       .job-status { margin: 10px 0 0; min-height: 18px; color: #71879d; font-size: .7rem; line-height: 1.45; }
       .ops-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; }
@@ -243,8 +244,20 @@
 
         <section class="stage-panel" data-panel="2">
           <section class="stage-head">
-            <div><p class="eyebrow">Stage 02 · structure &amp; epitope</p><h1>多模型会诊，找到最值得结合的表面</h1><p>对目标序列执行结构预测、跨膜拓扑、信号肽、表面可及性、保守性与潜在脱靶联合分析，再由 AI 对候选位点进行排序。</p></div>
-            <div class="confidence"><div class="confidence-label"><span>结构置信度</span><b>91%</b></div><div class="meter"><span style="width:91%"></span></div></div>
+            <div><p class="eyebrow">Stage 02 · structure &amp; epitope</p><h1>先查已有结构，再决定是否预测</h1><p>按完整序列精确查询 Biohub ESM Atlas。找到蛋白记录不等于已有结构；功能特征也不等于已验证的结合位点。</p></div>
+          </section>
+          <section class="card run-panel" id="atlasPanel">
+            <div class="card-head"><div><div class="card-title">Biohub · 已有结构查询</div><div class="card-sub">真实接口 · 不启动 GPU 预测或 binder 设计</div></div><span class="source-chip">Atlas Alpha</span></div>
+            <div class="integration-form">
+              <label for="atlasAccession">UniProt 编号（可单独填写）</label><input class="input" id="atlasAccession" placeholder="如 P42212（绿色荧光蛋白）" maxlength="20" />
+              <label for="atlasSequence">或输入单条蛋白序列 / FASTA</label><textarea class="sequence-input" id="atlasSequence" maxlength="20000" placeholder="1–5000 aa，标准 20 种氨基酸；不自动截短信号肽。若同时填编号，两者必须完全匹配。"></textarea>
+              <p class="job-status">点击查询会向 Biohub 发送序列摘要标识或 UniProt 编号。本次仅查询已有记录，不消耗推理额度；未公开序列请先确认可以向该服务查询。</p>
+              <div class="integration-actions"><button class="ghost" id="atlasExample">载入公开 GFP 示例</button><button class="primary" id="atlasLookup">查询已有结构</button></div>
+              <p class="job-status" id="biohubKeyState">密钥状态检测中；Atlas 只读查询本身无需 API Key。</p>
+              <p class="job-status" id="atlasStatus" role="status" aria-live="polite">尚未查询。不会用相似蛋白的结构冒充精确匹配结果。</p>
+              <div id="atlasResult" style="overflow-wrap:anywhere"></div>
+              <details style="margin-top:16px"><summary>Biohub binder 设计：接入条件</summary><p class="job-status">官方 notebook 通过 Modal 运行 GPU 设计，配套脚本默认 H100；Biohub API Key 不能替代 Modal 账号和算力。当前尚未接入或运行该设计流程。功能位点证据、计算预算、对照与独立复评确认后再启动。</p><a href="https://github.com/Biohub/esm/blob/main/cookbook/tutorials/binder_design.ipynb" target="_blank" rel="noreferrer">查看官方设计 notebook</a></details>
+            </div>
           </section>
           <div class="model-grid">
             <section class="card">
@@ -295,14 +308,14 @@
             </aside>
           </div>
           <section class="card site-section">
-            <div class="card-head"><div><div class="card-title">候选结合位点</div><div class="card-sub">综合表面连续性、保守性、糖基化、功能机制与脱靶风险</div></div><span class="source-chip">选择 1 个位点</span></div>
+            <div class="card-head"><div><div class="card-title">候选结合位点 · 旧版演示</div><div class="card-sub">以下 TIGIT 数值为示例，与上方 Atlas 查询无关；真实位点分析尚未接入</div></div><span class="source-chip">演示数据</span></div>
             <div class="site-grid">
               <label class="site-option"><input type="radio" name="site" value="A" checked /><span class="site-name">位点 A · FG loop</span><span class="site-score">0.92</span><p>功能相关且高度暴露，远离糖基化位点；预计可形成 820 Å² 界面。</p><span class="residues">Y72 · N74 · K82 · S84 · Q88</span></label>
               <label class="site-option"><input type="radio" name="site" value="B" /><span class="site-name">位点 B · CC′ loop</span><span class="site-score">0.84</span><p>表面连续性较好，但邻近保守受体界面，需控制交叉反应。</p><span class="residues">T45 · I47 · S49 · K51 · G53</span></label>
               <label class="site-option"><input type="radio" name="site" value="C" /><span class="site-name">位点 C · β-sheet edge</span><span class="site-score">0.71</span><p>结构稳定但局部可及性偏低，且受 N101 潜在糖基化影响。</p><span class="residues">R96 · V98 · N101 · T103</span></label>
             </div>
           </section>
-          <div class="stage-actions"><p>当前决策：<b id="siteDecision">TIGIT · 位点 A</b><br/>所有模型输入、版本、阈值与 AI 推理摘要将写入项目审计记录。</p><div><button class="ghost" data-goto="1">返回靶点选择</button> <button class="primary" data-goto="3">确认位点并设计 Binder →</button></div></div>
+          <div class="stage-actions"><p>演示选择：<b id="siteDecision">TIGIT · 位点 A</b><br/>Atlas 结果不会自动套用演示位点，也不会启动设计。</p><div><button class="ghost" data-goto="1">返回靶点选择</button> <button class="primary" data-goto="3">查看独立标准闭环 →</button></div></div>
         </section>
 
         <section class="stage-panel" data-panel="3">
@@ -495,6 +508,7 @@
           const health = await response.json();
           const deepseek = health.services?.deepseek;
           const gateway = health.services?.model_gateway;
+          $('#biohubKeyState').textContent = health.services?.biohub?.configured ? 'Biohub 服务端密钥已配置；推理鉴权尚未验证，付费预测未启用。' : 'Atlas 查询无需密钥；Biohub 推理密钥尚未配置。';
           $('#aiStatus').textContent = deepseek?.configured ? `DeepSeek · ${deepseek.model}` : '实时数据 · AI 待密钥';
           $('#aiStatus').classList.toggle('off', !deepseek?.configured);
           $('#deepseekServiceTag').textContent = deepseek?.configured ? '密钥已配置' : '待密钥';
@@ -596,6 +610,40 @@
       renderResults();
       checkServices();
       let benchmarkTimer;
+      const atlasMessages={invalid_sequence:'请输入单条标准氨基酸序列，长度 1–5000 aa。',single_sequence_required:'一次只能查询一条序列。',invalid_accession:'请使用 UniProt accession，例如 P42212。',sequence_or_accession_required:'请填写序列或 UniProt 编号。',accession_sequence_mismatch:'UniProt 完整序列与输入不一致。截短体请仅填写实际序列，不要同时指定完整蛋白编号。',atlas_upstream_429:'Atlas 暂时限流，请稍后重试。'};
+      $('#atlasExample').onclick=()=>{$('#atlasAccession').value='P42212';$('#atlasSequence').value='';$('#atlasResult').replaceChildren();$('#atlasStatus').textContent='已载入公开 GFP 编号；点击查询后才会访问 Atlas。';};
+      function renderAtlas(report){
+        const panel=$('#atlasResult');panel.replaceChildren();
+        const add=(tag,text)=>{const el=document.createElement(tag);el.textContent=text;panel.append(el);return el;};
+        const button=(label,action)=>{const b=add('button',label);b.className='ghost';b.onclick=action;return b;};
+        const link=(label,url)=>{const a=add('a',label);a.href=url;a.target='_blank';a.rel='noreferrer';a.style.display='block';};
+        button('下载本次查询报告 JSON',()=>downloadJSON(report,'BinderOS-Atlas-report.json'));
+        if(report.status==='not_found'){add('p','Atlas 未返回匹配记录。没有自动启动重新预测，也没有改用相似序列。');return;}
+        add('h3',report.identity.protein_name||'精确序列匹配记录');
+        add('p',`${report.query.length} aa · 完整序列已核对 · ${report.identity.organism||'物种未确认，不能从序列命中推定物种'}`);
+        add('p',`数据库记录来源：${report.identity.source} / ${report.identity.source_accession}`);
+        if(report.structure.sequence_verified){
+          add('p','已获取预测结构，PDB 单链残基序列与输入完全一致。不是实验结构。');
+          button('下载已核对的 PDB',()=>downloadText(report.structure.pdb_text,`Atlas-${report.query.protein_hash}.pdb`));
+        }else add('p',report.structure.status==='not_available'?'找到了蛋白记录，但接口没有返回已有结构坐标。本次没有生成新结构。':'返回结构未通过序列或格式核对，已隔离，不用于后续设计。');
+        const metric=v=>v===null||v===undefined?'未返回':String(v);
+        add('p',`pTM：${metric(report.structure.ptm)} · mean pLDDT：${metric(report.structure.mean_plddt)}（保留来源原始量纲；不换算为成功率）`);
+        if(report.features.length){add('h3','模型功能线索 · 不是位点结论');for(const f of report.features){add('h4',f.label);add('p',f.description);}}
+        for(const warning of report.caveats)add('p',warning).className='job-status';
+        link('Atlas 本次原始查询（不触发预测）',report.provenance.source_url);
+        if(report.identity.uniprot_url)link('UniProt 原始记录',report.identity.uniprot_url);
+        button('将已核对序列填入下方模型输入',()=>{$('#modelSequence').value=report.query.sequence;$('#partnerSequence').value='';$('#modelSelect').value='deeptmhmm2';$('#modelSelect').dispatchEvent(new Event('change'));$('#modelSequence').scrollIntoView({behavior:'smooth',block:'center'});showToast('已填入序列，尚未提交计算任务');});
+      }
+      $('#atlasLookup').onclick=async()=>{
+        const button=$('#atlasLookup');button.disabled=true;$('#atlasResult').replaceChildren();$('#atlasStatus').textContent='正在查询已有记录并核对序列…';
+        try{
+          const response=await fetch('/api/structures/atlas',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({accession:$('#atlasAccession').value.trim(),sequence:$('#atlasSequence').value}),signal:AbortSignal.timeout(75000)});
+          const report=await response.json();if(!response.ok)throw new Error(atlasMessages[report.error]||report.message||'查询失败，请稍后重试。');
+          renderAtlas(report);$('#atlasStatus').textContent=report.status==='structure_available'?'查询完成：已有结构已核对。':report.status==='record_only'?'查询完成：仅蛋白记录，没有可用的已核对结构。':'查询完成：未找到精确匹配记录。';
+        }catch(e){$('#atlasStatus').textContent=e.name==='TimeoutError'?'查询超时，请稍后重试；未自动启动预测。':e.message;}
+        finally{button.disabled=false;}
+      };
+      if(new URLSearchParams(location.search).get('stage')==='2')switchStage(2);
       function downloadText(text, filename) {
         const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
         const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);

@@ -7,6 +7,7 @@ BinderOS is an evidence-first workflow for target discovery, structure/topology 
 - The Sites Worker serves the web app and same-origin API.
 - `/api/research` retrieves current evidence from Europe PMC and reviewed UniProt records. If `DEEPSEEK_API_KEY` is configured, DeepSeek converts that evidence into `binderos.target-report.v1`; without the key, the API returns an evidence-only report and makes no AI recommendation.
 - `/api/models/jobs` forwards validated jobs to the separate authenticated model gateway in `gateway/`. The local deployment supports DeepTMHMM2, ProteinMPNN and a bounded Boltz-2 adapter; AlphaFold 3 and BindCraft remain unavailable.
+- `/api/structures/atlas` retrieves exact-sequence Biohub ESM Atlas records without on-demand folding or inference credentials. It distinguishes missing records, missing structures, and verified PDBs; model feature labels are not functional-site conclusions. See [Biohub integration review](docs/biohub-integration.md).
 - The model gateway runs on a Linux compute host. AlphaFold 3 should use its official container, model parameters, databases, and supported GPU configuration. The hosted website does not run GPU inference itself.
 
 ## Production environment
@@ -18,6 +19,7 @@ Set these on the Site, not in source control:
 - `DEEPSEEK_MODEL=deepseek-flash`
 - `MODEL_GATEWAY_URL=https://your-model-gateway.example`
 - `MODEL_GATEWAY_TOKEN` (secret)
+- `BIOHUB_API_KEY` (secret; reserved for separately authorized inference, not required for Atlas lookup)
 
 The model gateway uses the variables in `gateway/.env.example`.
 

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import worker from '../dist/server/index.js';
 
 const protein = { primaryAccession: 'PTEST', genes: [{ geneName: { value: 'TEST' } }], proteinDescription: { recommendedName: { fullName: { value: 'Test protein' } } } };
@@ -83,4 +84,45 @@ test('health does not advertise uninstalled models', async t => {
   const j = await r.json();
   assert.deepEqual(j.services.model_gateway.models, ['deeptmhmm2']);
   assert.equal(j.services.model_gateway.online, true);
+  assert.equal(j.services.biohub.inference_enabled, false);
+});
+
+const atlasSeq='MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG';
+const atlasHashFixture='4bbff14e49fc0da0d3902dab2290abdd';
+const atlasRecord={protein_hash:atlasHashFixture,sequence:atlasSeq,sequence_length:76,ptm:null,mean_plddt:null,residues_plddt:null,sae_features:[],pdb:null,folded_on_demand:false};
+const atlasRequest=body=>new Request('http://test/api/structures/atlas',{method:'POST',body:JSON.stringify(body)});
+test('Atlas exact lookup hashes FASTA correctly, never authenticates or folds, preserves missing metrics',async t=>{
+  t.mock.method(globalThis,'fetch',async(url,init)=>{
+    assert.equal(url,`https://biohub.ai/esm/protein/api/v1alpha1/proteins/${atlasHashFixture}?fold_on_miss=false&topk_features=5`);
+    assert.equal(init.headers.authorization,undefined);assert.equal(init.redirect,'error');
+    return Response.json(atlasRecord);
+  });
+  const r=await worker.fetch(atlasRequest({sequence:'>public\n'+atlasSeq.toLowerCase()}),{BIOHUB_API_KEY:'must-not-leave-server'});
+  const j=await r.json();assert.equal(r.status,200);assert.equal(j.status,'record_only');assert.equal(j.structure.mean_plddt,null);assert.equal(j.structure.sequence_verified,false);
+  assert.equal(JSON.stringify(j).includes('must-not-leave-server'),false);
+});
+test('Atlas accepts an exact complete PDB and quarantines mismatched structures',async t=>{
+  const pdb=readFileSync(new URL('../public/examples/1UBQ.pdb',import.meta.url),'utf8');
+  let bad=false;
+  t.mock.method(globalThis,'fetch',async()=>Response.json({...atlasRecord,pdb:bad?pdb.replaceAll('MET A   1','GLY A   1'):pdb}));
+  let j=await(await worker.fetch(atlasRequest({sequence:atlasSeq}),{})).json();
+  assert.equal(j.status,'structure_available');assert.equal(j.structure.sequence_verified,true);assert.equal(j.structure.pdb_text,pdb);
+  bad=true;j=await(await worker.fetch(atlasRequest({sequence:atlasSeq}),{})).json();
+  assert.equal(j.structure.status,'sequence_or_format_mismatch');assert.equal(j.structure.pdb_text,null);
+});
+test('Atlas rejects multiple sequences, invalid IDs, unsupported fields, and accession/sequence mismatch',async t=>{
+  let calls=0;
+  t.mock.method(globalThis,'fetch',async()=>{calls++;return Response.json({sequence:'ACDE',protein_hash:'irrelevant'});});
+  for(const body of [{sequence:'>a\nACDE\n>b\nACDE'},{sequence:'AXDE'},{accession:'https://example.com'},{sequence:'ACDE',fold_on_miss:true}]){
+    const r=await worker.fetch(atlasRequest(body),{});assert.equal(r.status,400);
+  }
+  assert.equal(calls,0);
+  const r=await worker.fetch(atlasRequest({sequence:atlasSeq,accession:'P42212'}),{});assert.equal(r.status,409);assert.equal(calls,1);
+});
+test('Atlas distinguishes absent records, corrupt records and unavailable upstream',async t=>{
+  let mode='missing';
+  t.mock.method(globalThis,'fetch',async()=>mode==='missing'?new Response('',{status:404}):mode==='corrupt'?Response.json({...atlasRecord,sequence:'ACDE'}):new Response('',{status:503}));
+  let r=await worker.fetch(atlasRequest({sequence:atlasSeq}),{});assert.equal(r.status,200);assert.equal((await r.json()).status,'not_found');
+  mode='corrupt';r=await worker.fetch(atlasRequest({sequence:atlasSeq}),{});assert.equal(r.status,502);assert.equal((await r.json()).error,'atlas_sequence_mismatch');
+  mode='down';r=await worker.fetch(atlasRequest({sequence:atlasSeq}),{});assert.equal(r.status,502);assert.equal((await r.json()).error,'atlas_upstream_503');
 });
