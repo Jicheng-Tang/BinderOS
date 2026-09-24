@@ -32,6 +32,23 @@ test('missing gateway is explicit', async () => {
   const r = await worker.fetch(new Request('http://test/api/models/jobs', { method: 'POST' }), {});
   assert.equal(r.status, 503);
 });
+test('benchmark proxy is fixed-target, authenticated, and resumable', async t => {
+  const env={MODEL_GATEWAY_URL:'https://gateway.example', MODEL_GATEWAY_TOKEN:'test-token'};
+  let count=0;
+  t.mock.method(globalThis, 'fetch', async (url, init)=>{
+    count++; assert.equal(url,'https://gateway.example/v1/benchmarks');
+    assert.equal(init.headers.authorization,'Bearer test-token');
+    assert.equal(JSON.parse(init.body).benchmark_id,'ubiquitin-dsk2-1wr1-v1');
+    return Response.json({id:'a'.repeat(32),status:'queued'},{status:202});
+  });
+  const payload={benchmark_id:'ubiquitin-dsk2-1wr1-v1',request_id:'fixture-1234'};
+  let r=await worker.fetch(new Request('http://test/api/benchmarks',{method:'POST',body:JSON.stringify(payload)}),env);
+  assert.equal(r.status,202);
+  r=await worker.fetch(new Request('http://test/api/benchmarks',{method:'POST',body:JSON.stringify({...payload,sequence:'AAAA'})}),env);
+  assert.equal(r.status,400); assert.equal(count,1);
+  r=await worker.fetch(new Request('http://test/api/benchmarks/not-a-job'),env);
+  assert.equal(r.status,400);
+});
 test('ProteinMPNN PDB requests reach the authenticated gateway', async t => {
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(url, 'https://gateway.example/v1/jobs');

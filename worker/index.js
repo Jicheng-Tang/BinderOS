@@ -213,7 +213,7 @@ async function handleModelStatus(pathname, env) {
 async function handleHealth(env) {
   let gateway = { configured: Boolean(env.MODEL_GATEWAY_URL), online: false, models: [] };
   if (env.MODEL_GATEWAY_URL) {
-    try { const status = await fetchJson(`${env.MODEL_GATEWAY_URL.replace(/\/$/, "")}/health`, { headers: gatewayHeaders(env) }, 6000); gateway = { ...gateway, online: status.status === "ok", models: status.models || [], device: status.device }; } catch { /* Offline is reported separately from configuration. */ }
+    try { const status = await fetchJson(`${env.MODEL_GATEWAY_URL.replace(/\/$/, "")}/health`, { headers: gatewayHeaders(env) }, 6000); gateway = { ...gateway, online: status.status === "ok", models: status.models || [], benchmarks: status.benchmarks || [], version: status.version, device: status.device }; } catch { /* Offline is reported separately from configuration. */ }
   }
   return json({
     status: "ok",
@@ -226,6 +226,22 @@ async function handleHealth(env) {
   });
 }
 
+async function handleBenchmark(request, env, pathname) {
+  if (!env.MODEL_GATEWAY_URL || !env.MODEL_GATEWAY_TOKEN) return json({ error: "model_gateway_unconfigured" }, 503);
+  const suffix = pathname.slice("/api/benchmarks".length);
+  if (suffix && !/^\/[a-f0-9]{32}(\/cancel)?$/.test(suffix)) return json({ error: "invalid_benchmark_id" }, 400);
+  const allowed = (!suffix && request.method === "POST") || (/^\/[a-f0-9]{32}$/.test(suffix) && request.method === "GET") || (suffix.endsWith("/cancel") && request.method === "POST");
+  if (!allowed) return json({ error: "method_not_allowed" }, 405);
+  let body;
+  if (!suffix) {
+    body = await readJson(request);
+    if (Object.keys(body).some(k => !["benchmark_id", "request_id"].includes(k)) || body.benchmark_id !== "ubiquitin-dsk2-1wr1-v1" || !/^[a-zA-Z0-9-]{8,80}$/.test(body.request_id || "")) return json({ error: "fixed_benchmark_only" }, 400);
+  }
+  const response = await fetch(`${env.MODEL_GATEWAY_URL.replace(/\/$/, "")}/v1/benchmarks${suffix}`, { method: request.method, headers: gatewayHeaders(env), ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15_000) });
+  const data = await response.json().catch(() => ({ error: "invalid_gateway_response" }));
+  return json(data, response.status);
+}
+
 export default {
   async fetch(request, env, ctx) {
     void ctx;
@@ -236,6 +252,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/research") return request.headers.get("accept")?.includes("application/x-ndjson") ? streamResearch(request, env, ctx) : await handleResearch(request, env);
       if (request.method === "POST" && url.pathname === "/api/models/jobs") return await handleModelJob(request, env);
       if (request.method === "GET" && url.pathname.startsWith("/api/models/jobs/")) return await handleModelStatus(url.pathname, env);
+      if (url.pathname === "/api/benchmarks" || url.pathname.startsWith("/api/benchmarks/")) return await handleBenchmark(request, env, url.pathname);
       if (request.method === "GET" && url.pathname === "/") return new Response(page, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } });
       return json({ error: "not_found" }, 404);
     } catch (error) {

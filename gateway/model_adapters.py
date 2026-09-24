@@ -43,7 +43,7 @@ def validate_new_model(request):
         return {"seed": seed, "chains": chains, "msa_mode": "single_sequence", "recycling_steps": 3, "sampling_steps": 200, "diffusion_samples": 1, "precision": "32-true", "kernels": False}
     if request.model != "proteinmpnn":
         raise ValueError("unsupported adapter")
-    if set(p) - {"seed", "num_sequences", "temperature", "design_chains"}:
+    if set(p) - {"seed", "num_sequences", "temperature", "design_chains", "fixed_positions"}:
         raise ValueError("unsupported ProteinMPNN parameters")
     if request.sequence or request.partner_sequence or request.sequences:
         raise ValueError("ProteinMPNN requires a PDB backbone, not a sequence")
@@ -94,7 +94,14 @@ def validate_new_model(request):
         numbers = sorted(int(resid[:4]) for c, resid in residues if c == chain)
         if numbers != list(range(numbers[0], numbers[-1] + 1)):
             raise ValueError("PDB residue-number gaps must be resolved before sequence design")
-    return {"seed": seed, "num_sequences": count, "temperature": temperature, "design_chains": design_chains, "fixed_chains": sorted(set(chains) - set(design_chains)), "model_name": "v_48_020", "batch_size": 1, "pdb": "\n".join(atoms) + "\nEND\n", "residue_count": len(residues)}
+    fixed = p.get("fixed_positions", {})
+    if not isinstance(fixed, dict) or set(fixed) - set(design_chains):
+        raise ValueError("fixed_positions must map design chains to 1-based sequence positions")
+    for chain, positions in fixed.items():
+        length = sum(c == chain for c, _ in residues)
+        if not isinstance(positions, list) or any(type(n) is not int or not 1 <= n <= length for n in positions) or len(set(positions)) != len(positions) or len(positions) == length:
+            raise ValueError("Invalid fixed positions (1-based sequence order, not PDB residue numbers)")
+    return {"seed": seed, "num_sequences": count, "temperature": temperature, "design_chains": design_chains, "fixed_positions": fixed, "fixed_chains": sorted(set(chains) - set(design_chains)), "model_name": "v_48_020", "batch_size": 1, "pdb": "\n".join(atoms) + "\nEND\n", "residue_count": len(residues)}
 
 
 def build_new_command(job_dir, request):
@@ -142,7 +149,7 @@ def collect_new_result(job_dir, model):
             designs.append({**item, **{k: float(v) for k, v in fields.items()}})
         if len(designs) != settings["num_sequences"] or any(not d["sequence"] for d in designs):
             raise RuntimeError("ProteinMPNN output is incomplete")
-        result.update(designs=designs, fasta=path.read_text(), warnings=["给定骨架的序列设计，不是从零设计 binder。", "score 是模型负对数概率，越低越符合该模型；不是结合亲和力或实验成功率。", "未指定为设计链的链保持固定；设计链内所有残基均可改变。"])
+        result.update(designs=designs, fasta=path.read_text(), warnings=["给定骨架的序列设计，不是从零设计 binder。", "score 是模型负对数概率，越低越符合该模型；不是结合亲和力或实验成功率。", "未指定为设计链的链保持固定；设计链内仅 fixed_positions 指定的位置固定。"])
     else:
         paths = sorted((job_dir / "results").rglob("input_model_*.pdb"))
         structures = []

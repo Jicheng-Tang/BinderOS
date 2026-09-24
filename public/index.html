@@ -307,9 +307,20 @@
 
         <section class="stage-panel" data-panel="3">
           <section class="stage-head">
-            <div><p class="eyebrow">Stage 03 · design, rank &amp; optimize</p><h1>从数千个设计中，交付可进入实验的候选集</h1><p>生成式模型提出骨架与序列，多模型完成结构、亲和力、特异性、聚集和可制造性筛选；高分候选进入定向迭代后再次复评。</p></div>
-            <div class="confidence"><div class="confidence-label"><span>候选质量门槛</span><b>严格</b></div><div class="meter"><span style="width:96%"></span></div></div>
+            <div><p class="eyebrow">Stage 03 · design, rank &amp; optimize</p><h1>真实设计、筛选与第二轮复评</h1><p>先在非致病标准样例上验证闭环。所有候选均来自实际模型任务；计算分数不代表结合亲和力或实验有效性。</p></div>
           </section>
+          <section class="card run-panel" id="benchmarkPanel">
+            <div class="card-head"><div><div class="card-title">泛素 × DSK2 UBA · 真实闭环</div><div class="card-sub">酿酒酵母 · 1WR1 · 靶标 76 aa + 已知 UBA 骨架 58 aa</div></div><span class="source-chip">固定标准样例</span></div>
+            <div style="padding:0 20px 20px;font-size:1rem;line-height:1.65">
+              <p>原始 UBA 对照 → ProteinMPNN 首轮生成 4 条 → Boltz-2 复合物预测与几何检查 → 选择 1 个父代 → 局部重设计 2 条 → 不同随机种子复评。最终最多保留 2 条通过检查且有差异的计算候选，不凑数量。</p>
+              <p>这是<strong>已知实验骨架的序列重设计</strong>，不是从零生成新骨架。没有候选通过时也会保留完整报告。若初筛未达标，父代仅作为探索性优化对象，不视为命中。</p>
+              <p><a href="https://www.rcsb.org/structure/1WR1" target="_blank" rel="noopener">查看实验结构来源</a> · 全程使用本机 GPU；可能需要数十分钟。关闭页面不取消后台计算。</p>
+              <div class="integration-actions"><button class="primary" id="startBenchmark">启动真实标准样例</button><button class="ghost" id="resumeBenchmark" hidden>恢复上次闭环</button><button class="ghost" id="cancelBenchmark" hidden>当前模型完成后停止</button></div>
+              <p id="benchmarkStatus" role="status" aria-live="polite">尚未运行。需要计算服务 0.4.0 或更新版本。</p>
+              <div id="benchmarkResult" style="overflow-wrap:anywhere"></div>
+            </div>
+          </section>
+          <details style="margin-top:24px"><summary style="cursor:pointer;font-size:1rem;padding:12px">查看旧版流程演示（模拟数据，不是上方真实结果）</summary>
           <div class="settings-grid">
             <section class="card">
               <div class="card-head"><div><div class="card-title">设计任务</div><div class="card-sub" id="designTaskSubtitle">TIGIT · 位点 A</div></div><span class="source-chip">Research use only</span></div>
@@ -340,6 +351,7 @@
             <div class="demo-note">当前页面为产品工作流原型，候选序列与评分均为演示数据，不可直接用于实验。生产系统应保留模型版本、原始输出、适用范围与人工复核结论。</div>
           </section>
           <div class="stage-actions"><p>交付包建议包含：<b>FASTA、结构文件、模型原始评分、风险说明、实验优先级与完整审计记录</b>。</p><div><button class="ghost" data-goto="2">返回位点评估</button> <button class="primary" id="reportButton">生成最终报告</button></div></div>
+          </details>
         </section>
 
         <section class="stage-panel" data-panel="4">
@@ -577,12 +589,76 @@
       $$('#countSelector button').forEach(button => button.addEventListener('click', () => { deliverCount = Number(button.dataset.count); $$('#countSelector button').forEach(x => x.classList.toggle('active', x === button)); renderResults(); showToast(`最终交付数量设为 ${deliverCount} 个`); }));
       $('#runDesign').addEventListener('click', () => { const button = $('#runDesign'); const status = $('#runStatus'); const bars = $$('.bar i'); button.disabled = true; button.textContent = '演示任务运行中…'; status.textContent = '演示模型正在编排'; bars.forEach(bar => { bar.dataset.width = bar.style.getPropertyValue('--w'); bar.style.setProperty('--w','0%'); }); setTimeout(() => bars.forEach(bar => bar.style.setProperty('--w',bar.dataset.width)), 80); setTimeout(() => { button.disabled = false; button.textContent = '重新运行演示设计'; status.textContent = '示例任务已完成'; renderResults(); showToast(`演示完成：保留 ${deliverCount} 个候选样例`); }, 2300); });
       $('#downloadButton').addEventListener('click', () => { const header = ['rank','candidate_id','sequence_preview','pLDDT','ipTM','predicted_dG_kcal_mol','developability','composite_score']; const lines = [header.join(','), ...candidateData.slice(0, deliverCount).map((row, i) => [i + 1, ...row].join(','))]; const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'BinderOS_demo_candidates.csv'; link.click(); URL.revokeObjectURL(link.href); showToast('候选 CSV 已生成'); });
-      $('#reportButton').addEventListener('click', () => showToast('最终报告已进入生成队列 · 将包含完整模型与风险记录'));
+      $('#reportButton').addEventListener('click', () => showToast('这是演示界面，未提交报告任务；真实报告请在上方闭环面板下载。'));
       $('#auditButton').addEventListener('click', () => $('#auditDialog').showModal());
       $('#closeAudit').addEventListener('click', () => $('#auditDialog').close());
       $('#auditDialog').addEventListener('click', event => { if (event.target === $('#auditDialog')) $('#auditDialog').close(); });
       renderResults();
       checkServices();
+      let benchmarkTimer;
+      function downloadText(text, filename) {
+        const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));
+        const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      }
+      let benchmarkId = localStorage.getItem('binderos-benchmark-id');
+      $('#resumeBenchmark').hidden = !benchmarkId;
+      const formatMetric = v => typeof v === 'number' && Number.isFinite(v) ? v.toFixed(3) : '—';
+      async function benchmarkRequest(path, init) {
+        const r = await fetch(path, { ...init, signal: AbortSignal.timeout(20000) });
+        const data = await r.json();
+        if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : data.error || `请求失败 ${r.status}`);
+        return data;
+      }
+      function renderBenchmark(c) {
+        const names = { queued:'排队', target_topology:'靶标拓扑检查', native_control:'原始 UBA 对照', native_control_confirmation:'原始对照不同种子复评', round1_generation:'首轮序列生成', round2_generation:'第二轮局部重设计', complete:'计算流程结束' };
+        const label = names[c.stage] || (c.stage?.startsWith('confirm_') ? `不同种子复评 ${c.stage.slice(8)}` : c.stage?.startsWith('evaluate_') ? `复合物评估 ${c.stage.slice(9)}` : c.stage);
+        const active = ['queued','running'].includes(c.status);
+        $('#benchmarkStatus').textContent = `${c.id.slice(0,10)} · ${c.status} · ${label}${c.cancel_requested ? ' · 已请求停止' : ''}${c.error ? ` · ${c.error}` : ''}`;
+        $('#startBenchmark').disabled = active; $('#cancelBenchmark').hidden = !active;
+        $('#cancelBenchmark').disabled = !!c.cancel_requested;
+        const control = c.control?.metrics;
+        const rows = c.candidates || [];
+        const panel = $('#benchmarkResult');
+        panel.innerHTML = `<p>已提交 ${c.jobs.length} 个真实模型任务；生成 ${rows.length} 条序列，${rows.filter(x => x.evaluations?.length).length} 条已评估；最终入选 ${c.selected_ids?.length || 0} 条。</p>`;
+        if (control) panel.innerHTML += `<p>原始 UBA 对照：ipTM ${formatMetric(control.iptm)}；binder pLDDT ${formatMetric(control.binder_plddt)}。仅为计算对照，不是新发现。</p>`;
+        if (rows.length) panel.innerHTML += `<div class="table-wrap"><table class="protocol-table"><thead><tr><th>候选 / 父代</th><th>ipTM</th><th>Binder pLDDT</th><th>接触 / 碰撞</th><th>复评次数</th><th>结论</th></tr></thead><tbody>${rows.map(x => `<tr><td>${escapeHTML(x.id)} / ${escapeHTML(x.parent_id)}</td><td>${formatMetric(x.metrics?.iptm)}</td><td>${formatMetric(x.metrics?.binder_plddt)}</td><td>${x.metrics?.contact_pairs ?? '—'} / ${x.metrics?.clashing_pairs ?? '—'}</td><td>${x.evaluations?.length || 0}</td><td>${x.duplicate ? '重复序列，跳过' : x.selected ? '入选计算候选' : x.confirmed_pass ? '通过检查，未入选' : x.evaluations?.length >= 2 ? '未通过检查' : x.evaluations?.length ? '仅完成初评' : '等待评估'}</td></tr>`).join('')}</tbody></table></div><p>表中置信度取各次预测的最低值，碰撞取最高值。工程检查门槛：ipTM ≥ 0.5，binder pLDDT ≥ 0.7，接触残基对 ≥ 5，严重碰撞残基对 = 0；这些门槛未经实验校准。</p>`;
+        if (c.parent_selection?.mode === 'exploratory_not_a_hit') panel.innerHTML += '<p>首轮父代未达到全部门槛；第二轮为探索性优化，不视为命中。</p>';
+        if (c.optimization_comparison?.length) panel.innerHTML += `<p>${c.optimization_comparison.map(x => `${escapeHTML(x.child_id)} 相对 ${escapeHTML(x.parent_id)}：最低 ipTM 变化 ${formatMetric(x.delta_worst_seed_iptm)}；${x.computational_improvement ? '观察到计算指标改善，未证明实际结合改善' : '未满足预设计算改善判据'}`).join('<br>')}</p>`;
+        if (c.outcome === 'no_candidates_passed' || c.outcome === 'no_unique_evaluable_candidates') panel.innerHTML += '<p><strong>本轮没有可交付的合格计算候选。</strong>计算流程结束不等于生物学设计成功。</p>';
+        if (c.control_passed === false) panel.innerHTML += '<p><strong>原始已知结合对照未通过：评价体系尚未通过本样例校准。</strong>后续仅用于软件联调，不交付合格候选，也不据此判断真实结合能力。</p>';
+        if (c.warnings) panel.innerHTML += `<details><summary>适用范围与风险</summary><ul>${c.warnings.map(w=>`<li>${escapeHTML(w)}</li>`).join('')}</ul></details>`;
+        const add = (label, fn) => { const b=document.createElement('button'); b.className='ghost'; b.style.margin='8px 8px 0 0'; b.textContent=label; b.onclick=fn; panel.append(b); };
+        add('下载闭环报告 JSON',()=>downloadJSON(c,`BinderOS-benchmark-${c.id}.json`));
+        if (c.selected_fasta) add('下载入选候选 FASTA',()=>downloadText(c.selected_fasta,`BinderOS-${c.id}.fasta`));
+        if (rows.length) add('下载全部生成序列（含未通过）',()=>downloadText(rows.map(x=>`>${x.id}|parent=${x.parent_id}|selected=${!!x.selected}\n${x.sequence}\n`).join(''),`BinderOS-${c.id}-all.fasta`));
+        if (c.jobs.length) {
+          const details=document.createElement('details'); const summary=document.createElement('summary'); summary.textContent='原始模型任务与结构文件'; details.append(summary);
+          for(const j of c.jobs) { const b=document.createElement('button'); b.className='ghost'; b.style.margin='8px'; b.textContent=j.label; b.onclick=async()=>{try{const raw=await benchmarkRequest(`/api/models/jobs/${j.id}`);downloadJSON(raw,`BinderOS-${j.id}.json`);for(const s of raw.result?.structures || []) downloadText(s.pdb,`${j.label}-${s.filename}`);}catch(e){showToast(e.message);}}; details.append(b); } panel.append(details);
+        }
+      }
+      async function pollBenchmark(id, attempt=0) {
+        clearTimeout(benchmarkTimer);
+        if(id !== benchmarkId) return;
+        if(attempt >= 360) { $('#benchmarkStatus').textContent='自动查询已暂停，后台任务继续运行；点击恢复上次闭环。'; return; }
+        try {
+          const c = await benchmarkRequest(`/api/benchmarks/${id}`); renderBenchmark(c);
+          if(['queued','running'].includes(c.status)) benchmarkTimer=setTimeout(()=>pollBenchmark(id,attempt+1),10000);
+          else localStorage.removeItem('binderos-benchmark-request');
+        } catch(e) { $('#benchmarkStatus').textContent=`${e.message}；连接恢复后会继续读取同一任务。`; benchmarkTimer=setTimeout(()=>pollBenchmark(id,attempt+1),10000); }
+      }
+      $('#startBenchmark').onclick=async()=>{
+        $('#startBenchmark').disabled=true;
+        try {
+          const health=await benchmarkRequest('/api/health');
+          if(!health.services.model_gateway.benchmarks?.includes('ubiquitin-dsk2-1wr1-v1')) throw new Error('计算服务尚未加载闭环功能或当前离线，请重启本机计算服务后再试。');
+          const requestId=localStorage.getItem('binderos-benchmark-request') || crypto.randomUUID();
+          localStorage.setItem('binderos-benchmark-request',requestId);
+          const c=await benchmarkRequest('/api/benchmarks',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({benchmark_id:'ubiquitin-dsk2-1wr1-v1',request_id:requestId})});
+          benchmarkId=c.id; localStorage.setItem('binderos-benchmark-id',c.id); $('#resumeBenchmark').hidden=false;renderBenchmark(c);pollBenchmark(c.id);
+        }catch(e){$('#benchmarkStatus').textContent=e.message;$('#startBenchmark').disabled=false;}
+      };
+      $('#resumeBenchmark').onclick=()=>{if(benchmarkId)pollBenchmark(benchmarkId);};
+      $('#cancelBenchmark').onclick=async()=>{try{renderBenchmark(await benchmarkRequest(`/api/benchmarks/${benchmarkId}/cancel`,{method:'POST'}));}catch(e){showToast(e.message);}};
       function registerAgentTools() {
         const context = document.modelContext;
         if (!context?.registerTool) return;

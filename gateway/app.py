@@ -16,15 +16,29 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 try:
     from .model_adapters import installed_models, validate_new_model, build_new_command, collect_new_result
+    from . import benchmark
 except ImportError:
     from model_adapters import installed_models, validate_new_model, build_new_command, collect_new_result
+    import benchmark
 
-app = FastAPI(title="BinderOS Model Gateway", version="0.3.0")
+app = FastAPI(title="BinderOS Model Gateway", version="0.4.0")
 JOBS: dict[str, dict] = {}
 JOB_ROOT = Path(os.getenv("BINDEROS_JOB_ROOT", "/tmp/binderos-jobs")).resolve()
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
 ENABLED_MODELS = set(os.getenv("BINDEROS_ENABLED_MODELS", "deeptmhmm2").split(","))
 RUN_LOCK = asyncio.Semaphore(1)
+CAMPAIGN_ROOT = JOB_ROOT / "campaigns"
+CAMPAIGN_ROOT.mkdir(exist_ok=True)
+CAMPAIGNS: dict[str, dict] = {}
+for record in CAMPAIGN_ROOT.glob("*.json"):
+    try:
+        campaign = json.loads(record.read_text())
+        if campaign["status"] in ("queued", "running"):
+            campaign.update(status="failed", error="gateway_restarted: partial results retained; resubmit explicitly")
+            record.write_text(json.dumps(campaign))
+        CAMPAIGNS[campaign["id"]] = campaign
+    except (ValueError, KeyError):
+        continue
 for record in JOB_ROOT.glob("*/status.json"):
     try:
         job = json.loads(record.read_text())
@@ -177,7 +191,7 @@ async def execute_job(job_id: str, request: JobRequest) -> None:
 
 @app.get("/health")
 async def health(_: None = Depends(authorize)) -> dict:
-    return {"status": "ok", "version": app.version, "models": available_models(), "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "active_jobs": sum(j["status"] in ("queued", "running") for j in JOBS.values())}
+    return {"status": "ok", "version": app.version, "models": available_models(), "benchmarks": [benchmark.ID], "device": os.getenv("DEEPTMHMM_DEVICE", "cpu"), "active_jobs": sum(j["status"] in ("queued", "running") for j in JOBS.values())}
 
 
 @app.post("/v1/jobs", status_code=202)
@@ -211,3 +225,79 @@ async def get_job(job_id: str, _: None = Depends(authorize)) -> dict:
     if job_id not in JOBS:
         raise HTTPException(status_code=404, detail="job not found")
     return JOBS[job_id]
+
+
+class CampaignRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    benchmark_id: Literal["ubiquitin-dsk2-1wr1-v1"] = benchmark.ID
+    request_id: str = Field(pattern=r"^[a-zA-Z0-9-]{8,80}$")
+
+
+def save_campaign(campaign: dict) -> None:
+    temp = CAMPAIGN_ROOT / (campaign["id"] + ".tmp")
+    temp.write_text(json.dumps(campaign, ensure_ascii=False))
+    temp.replace(CAMPAIGN_ROOT / (campaign["id"] + ".json"))
+
+
+async def run_campaign(campaign: dict) -> None:
+    campaign.update(status="running", started_at=now())
+    save_campaign(campaign)
+
+    async def invoke(label, payload):
+        if campaign.get("cancel_requested"):
+            raise RuntimeError("cancelled_by_user")
+        request = JobRequest(name=label, **payload)
+        if request.model in ("proteinmpnn", "boltz2"):
+            validate_new_model(request)
+        job_id = uuid.uuid4().hex
+        JOBS[job_id] = {"id": job_id, "model": request.model, "name": label, "campaign_id": campaign["id"],
+                        "status": "queued", "sequence_length": len(request.sequence or ""), "created_at": now()}
+        save_job(job_id)
+        campaign["jobs"].append({"id": job_id, "label": label, "model": request.model})
+        save_campaign(campaign)
+        await run_job(job_id, request)
+        if JOBS[job_id]["status"] != "succeeded":
+            raise RuntimeError(f"{label}: {JOBS[job_id].get('error', 'model_failed')}")
+        return JOBS[job_id]
+
+    try:
+        await benchmark.run(campaign, invoke, lambda: save_campaign(campaign))
+        campaign.update(status="succeeded", finished_at=now())
+    except Exception as error:
+        campaign.update(status="cancelled" if str(error) == "cancelled_by_user" else "failed", error=str(error), finished_at=now())
+    finally:
+        save_campaign(campaign)
+
+
+@app.post("/v1/benchmarks", status_code=202)
+async def create_campaign(request: CampaignRequest, tasks: BackgroundTasks, _: None = Depends(authorize)) -> dict:
+    for campaign in CAMPAIGNS.values():
+        if campaign["request_id"] == request.request_id:
+            return campaign
+    if any(c["status"] in ("queued", "running") for c in CAMPAIGNS.values()):
+        raise HTTPException(status_code=409, detail="已有真实闭环任务在运行，请恢复该任务或等待完成。")
+    if not {"proteinmpnn", "boltz2", "deeptmhmm2"} <= set(available_models()):
+        raise HTTPException(status_code=503, detail="benchmark_models_unavailable")
+    benchmark.load_benchmark()  # Verify fixture integrity before queueing any GPU work.
+    campaign = {"id": uuid.uuid4().hex, "request_id": request.request_id, "benchmark_id": request.benchmark_id,
+                "status": "queued", "stage": "queued", "created_at": now(), "jobs": []}
+    CAMPAIGNS[campaign["id"]] = campaign
+    save_campaign(campaign)
+    tasks.add_task(run_campaign, campaign)
+    return campaign
+
+
+@app.get("/v1/benchmarks/{campaign_id}")
+async def get_campaign(campaign_id: str, _: None = Depends(authorize)) -> dict:
+    if campaign_id not in CAMPAIGNS:
+        raise HTTPException(status_code=404, detail="benchmark not found")
+    return CAMPAIGNS[campaign_id]
+
+
+@app.post("/v1/benchmarks/{campaign_id}/cancel")
+async def cancel_campaign(campaign_id: str, _: None = Depends(authorize)) -> dict:
+    campaign = await get_campaign(campaign_id)
+    if campaign["status"] in ("queued", "running"):
+        campaign["cancel_requested"] = True
+        save_campaign(campaign)
+    return campaign

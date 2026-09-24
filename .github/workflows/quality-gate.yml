@@ -20,6 +20,6 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install -r gateway/requirements.txt httpx==0.28.1
-      - run: python -m unittest gateway/test_gateway.py
+      - run: python -m unittest gateway/test_gateway.py gateway/test_benchmark.py
       - name: Reject committed credentials
         run: node scripts/check-secrets.mjs
