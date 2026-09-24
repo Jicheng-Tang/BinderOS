@@ -94,7 +94,7 @@ const atlasRequest=body=>new Request('http://test/api/structures/atlas',{method:
 test('Atlas exact lookup hashes FASTA correctly, never authenticates or folds, preserves missing metrics',async t=>{
   t.mock.method(globalThis,'fetch',async(url,init)=>{
     assert.equal(url,`https://biohub.ai/esm/protein/api/v1alpha1/proteins/${atlasHashFixture}?fold_on_miss=false&topk_features=5`);
-    assert.equal(init.headers.authorization,undefined);assert.equal(init.redirect,'error');
+    assert.equal(init.headers.authorization,undefined);assert.equal(init.redirect,'manual');
     return Response.json(atlasRecord);
   });
   const r=await worker.fetch(atlasRequest({sequence:'>public\n'+atlasSeq.toLowerCase()}),{BIOHUB_API_KEY:'must-not-leave-server'});
@@ -125,4 +125,9 @@ test('Atlas distinguishes absent records, corrupt records and unavailable upstre
   let r=await worker.fetch(atlasRequest({sequence:atlasSeq}),{});assert.equal(r.status,200);assert.equal((await r.json()).status,'not_found');
   mode='corrupt';r=await worker.fetch(atlasRequest({sequence:atlasSeq}),{});assert.equal(r.status,502);assert.equal((await r.json()).error,'atlas_sequence_mismatch');
   mode='down';r=await worker.fetch(atlasRequest({sequence:atlasSeq}),{});assert.equal(r.status,502);assert.equal((await r.json()).error,'atlas_upstream_503');
+});
+test('Atlas rejects redirects without following them to another host',async t=>{
+  let calls=0;
+  t.mock.method(globalThis,'fetch',async(_url,init)=>{calls++;assert.equal(init.redirect,'manual');return new Response('',{status:302,headers:{location:'https://untrusted.example'}});});
+  const r=await worker.fetch(atlasRequest({sequence:atlasSeq}),{});assert.equal(r.status,502);assert.equal((await r.json()).error,'atlas_upstream_302');assert.equal(calls,1);
 });

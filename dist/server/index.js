@@ -42,7 +42,8 @@ function atlasSequence(value) {
 
 async function atlasGet(path) {
   // Fixed origin, no user URLs, no inference token, and no cross-origin redirects.
-  const response=await fetch(ATLAS_BASE+path,{redirect:'error',signal:AbortSignal.timeout(30000),headers:{accept:'application/json'}});
+  // workerd does not support redirect:"error"; manual mode rejects 3xx below.
+  const response=await fetch(ATLAS_BASE+path,{redirect:'manual',signal:AbortSignal.timeout(30000),headers:{accept:'application/json'}});
   if (response.status===404) return null;
   if (!response.ok) throw new Error(`atlas_upstream_${response.status}`);
   const reader=response.body.getReader(); const chunks=[]; let size=0;
